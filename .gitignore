@@ -1,0 +1,21 @@
+# Environments
+venv/
+env/
+.env
+.venv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# IDEs and OS
+.DS_Store
+.idea/
+.vscode/
+
+# SatQuery specific
+backend/results/
+backend/models/
+backend/venv/

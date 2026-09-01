@@ -1,0 +1,77 @@
+"""
+API Schemas — Pydantic request/response models.
+
+Agreed contract between M1 (Backend), M2 (Frontend), M3 (Agent).
+"""
+
+from pydantic import BaseModel, Field
+from typing import Optional
+
+
+class EvidenceImage(BaseModel):
+    """A generated evidence image (change map, overlay, etc.)."""
+    type: str
+    url: str
+    caption: str
+
+
+class BoundingRegion(BaseModel):
+    """A detected bounding region with label and confidence."""
+    bbox: list[float]
+    label: str
+    confidence: float
+
+
+class Evidence(BaseModel):
+    """Collection of evidence: images and detected regions."""
+    images: list[EvidenceImage] = []
+    regions: list[BoundingRegion] = []
+
+
+class PipelineStep(BaseModel):
+    """A single step in the execution pipeline."""
+    step: int
+    model: str
+    action: str
+    status: str
+    time_ms: float
+    error: Optional[str] = None
+
+
+class ValidationInfo(BaseModel):
+    """Input validation details for the execution trace."""
+    image_count: int
+    format: list[str]
+    modality: list[str]
+    temporal: bool
+    cross_modal: bool
+    compatible: bool
+    warnings: list[str] = []
+
+
+class ExecutionTrace(BaseModel):
+    """Full execution trace — makes agent decisions transparent."""
+    input_validation: ValidationInfo
+    detected_task: str
+    task_confidence: float
+    reasoning: str
+    selected_models: list[dict]
+    pipeline_steps: list[PipelineStep]
+    total_time_ms: float
+
+
+class AnalysisResponse(BaseModel):
+    """Complete API response for POST /api/analyze."""
+    answer: str
+    confidence: float
+    evidence: Evidence
+    execution_trace: ExecutionTrace
+
+
+class HealthResponse(BaseModel):
+    """Response for GET /api/health."""
+    status: str
+    models_loaded: list[str]
+    gpu_available: bool
+    gpu_memory_used: Optional[str] = None
+    registered_models: Optional[list[dict]] = None
