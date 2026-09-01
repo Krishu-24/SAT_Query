@@ -4,7 +4,19 @@ This repository contains the backend and agent logic for the SatQuery AI POC, bu
 
 > **Note:** This repository specifically focuses on **Member 3 (Agent/Router Lead)** deliverables and the **Qwen2.5-VL integration**. Other pipelines (TinyCD, Grounding DINO, etc.) are stubbed for end-to-end testing.
 
-## ✨ Features
+## ✨ Member 3 (Agent/Router) Progress
+
+I have successfully completed all M3 deliverables for this POC:
+- **Project Structure**: Set up the full FastAPI backend architecture.
+- **Agent Logic**: Built the `RuleBasedRouter` (Zero-VRAM), `InputValidator`, and `PipelineExecutor`.
+- **Output Engine**: Built the `TraceBuilder`, `OutputIntegrator`, and `evidence.py` overlay generators.
+- **VLM Integration**: Wrote the `QwenVLMWrapper` and successfully connected it to the local pipeline.
+- **UI & API**: Built the FastAPI routes and a functional `frontend/index.html` to prove end-to-end connectivity.
+- **Team Enablement**: Created model stubs for all M4 pipelines so other members can test their code without crashes.
+
+> **Team Members (M1, M2, M4, M5):** Please read [docs/STUBS_DOCUMENTATION.md](docs/STUBS_DOCUMENTATION.md) for exact instructions on where to inject your code, replace my stubs, and build the final UI!
+
+## 🌟 Features
 
 - **Agentic Routing:** Automatically routes user queries and images to the correct task pipeline (VQA, Grounding, Change Detection, Change VQA, Optical-SAR Fusion).
 - **Zero-VRAM Rule-Based Router:** Uses deterministic keyword and input analysis to select pipelines without needing an LLM.
