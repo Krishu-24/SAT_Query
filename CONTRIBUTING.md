@@ -1,63 +1,86 @@
-# 🤝 Team Workflow & Contributing Guide
+# Team Workflow and Contributing Guide
 
-Welcome to the SatQuery AI team! Since we have 6 members working in parallel across frontend, backend, and machine learning pipelines, we need a strict but simple workflow to avoid merge conflicts and lost work.
+This project is designed for parallel work across backend, frontend, and ML components. A simple and disciplined workflow keeps the repo stable and prevents merge conflicts.
 
-## 🌳 Branching Strategy
+## Branching Strategy
 
-**NEVER commit directly to the `main` branch.**
+Do not commit directly to `main`.
 
-1. **`main`** - This is our stable, working POC branch. It should always be deployable.
-2. **Feature Branches** - Every member creates a branch for their specific task. 
+1. `main` is the stable branch for verified, working code.
+2. Every task should be developed on a feature branch.
 
-### How to name your branches:
-Use the format: `[member_id]/[feature_name]`
-- Example (M1): `m1/api-error-handling`
-- Example (M2): `m2/react-dashboard`
-- Example (M4): `m4/tinycd-integration`
+Branch naming format:
 
-## 🔄 The Daily Workflow
+```text
+[member_id]/[feature_name]
+```
 
-### 1. Update your local repository
-Always pull the latest changes from `main` before starting your work to avoid conflicts.
+Examples:
+
+- `m1/api-error-handling`
+- `m2/react-dashboard`
+- `m4/tinycd-integration`
+
+## Daily Workflow
+
+### 1. Sync with the latest main branch
+
 ```bash
 git checkout main
 git pull origin main
 ```
 
-### 2. Create your branch
+### 2. Create a feature branch
+
 ```bash
 git checkout -b m[X]/your-feature-name
 ```
-*(Replace `[X]` with your member number)*
 
-### 3. Work and Commit
-Write your code, test it, and commit it. Write clear commit messages.
+Replace `[X]` with the relevant member number.
+
+### 3. Commit work in small, reviewable chunks
+
 ```bash
 git add .
-git commit -m "feat(router): add validation for geotiff formats"
+git commit -m "feat(router): add validation for geotiff inputs"
 ```
 
-### 4. Keep your branch updated (Crucial!)
-While you are working, other members will be merging their code into `main`. **You must continuously pull their changes into your branch** so you don't fall behind.
+### 4. Keep the branch up to date
+
+Other team members will merge to `main` while you work. Stay synchronized.
+
 ```bash
-# While on your feature branch:
 git pull origin main
 ```
-*Resolve any merge conflicts locally if they occur.*
 
-### 5. Push and Create a Pull Request (PR)
-When your feature is done and tested locally:
+Resolve conflicts locally before continuing.
+
+### 5. Push and open a pull request
+
 ```bash
 git push origin m[X]/your-feature-name
 ```
-Then, go to GitHub and open a **Pull Request** from your branch into `main`.
 
-### 6. Review and Merge
-- Ping the team in your group chat to review your PR.
-- **Do not merge your own PR without someone else looking at it.**
-- Once approved, merge it into `main` and delete your feature branch.
+Open a pull request into `main` and request review from the appropriate team member.
 
-## 🚨 Golden Rules
-1. **Communicate**: If you are changing a core schema in `backend/app/api/schemas.py` or a core router file, tell the team! Other people depend on these contracts.
-2. **Pull frequently**: `git pull origin main` is your best friend. Do it every morning and every time someone merges a PR.
-3. **Don't break the stubs until ready**: If you are implementing a real ML model, make sure it returns the exact same JSON structure as the stub it is replacing.
+### 6. Review and merge
+
+- Request review before merging.
+- Do not merge your own pull request without another reviewer.
+- Once approved, merge into `main` and remove the feature branch.
+
+## Team Standards
+
+1. Communicate early when changing shared interfaces such as `backend/app/api/schemas.py` or routing contracts.
+2. Pull from `main` frequently to minimize divergence.
+3. Do not break stub contracts until the replacement implementation is ready and tested.
+4. Keep commit messages specific and traceable to the work being done.
+
+## Review Checklist
+
+Before opening a pull request, confirm:
+
+- the feature works locally
+- the relevant tests or smoke checks pass
+- the output remains compatible with the API contract
+- the branch is current with `main`

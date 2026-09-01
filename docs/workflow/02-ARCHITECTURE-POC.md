@@ -1,137 +1,92 @@
 # 02 — Architecture (POC)
 
-> Simplified architecture for the 3-day build.
-
----
+> Simplified architecture for the three-day build.
 
 ## High-Level Flow
 
-```
-┌─────────────────────────┐
-│     FRONTEND (Next.js)  │
-│  • Image upload (1-2)   │
-│  • Modality selector    │
-│  • Query text input     │
-│  • Result + Evidence    │
-│  • Execution Trace      │
-│  localhost:3000         │
-└───────────┬─────────────┘
-            │ POST /api/analyze (multipart)
-            ↓
-┌─────────────────────────┐
-│   BACKEND (FastAPI)     │
-│  • Input Validator      │
-│  • Rule-Based Router    │
-│  • Pipeline Executor    │
-│  • Model Registry       │
-│  • Output Integrator    │
-│  localhost:8000         │
-└───────────┬─────────────┘
-            │
-    ┌───────┼───────┐
-    ↓       ↓       ↓
-┌───────┐┌───────┐┌───────┐
-│Single ││BiTemp ││Cross  │
-│Image  ││oral   ││Modal  │
-│       ││       ││       │
-│• VQA  ││• CD   ││• Fuse │
-│• Cap  ││• CVQA ││• VLM  │
-│• Grnd ││       ││       │
-└───┬───┘└───┬───┘└───┬───┘
-    └────────┼────────┘
-             ↓
-    Output Integrator
-    (answer + evidence
-     + confidence + trace)
+```text
+Frontend (Next.js)
+  └── POST /api/analyze
+        ↓
+Backend (FastAPI)
+  ├── Input Validator
+  ├── Rule-Based Router
+  ├── Pipeline Executor
+  ├── Model Registry
+  └── Output Integrator
+        ↓
+    ┌──────────────┬──────────────┬──────────────┐
+    ↓              ↓              ↓
+Single-image    Bi-temporal    Cross-modal
+(VQA / Caption /   (Change       (Optical-SAR
+ Grounding)      Detection /    Fusion)
+                 Change VQA)
+    └──────────────┴──────────────┘
+                     ↓
+             Output Integrator
+             (answer + evidence +
+              confidence + trace)
 ```
 
----
+## Directory Structure
 
-## Directory Structure (POC)
-
-```
+```text
 sih26/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py                 # FastAPI entry + CORS + lifespan
+│   │   ├── main.py
 │   │   ├── api/
-│   │   │   ├── routes.py           # POST /api/analyze, GET /api/health
-│   │   │   └── schemas.py          # Pydantic request/response models
+│   │   │   ├── routes.py
+│   │   │   └── schemas.py
 │   │   ├── agent/
-│   │   │   ├── router.py           # RuleBasedRouter (keyword + input analysis)
-│   │   │   ├── executor.py         # PipelineExecutor (runs model steps)
-│   │   │   └── validator.py        # InputValidator (format, count, modality)
+│   │   │   ├── router.py
+│   │   │   ├── executor.py
+│   │   │   └── validator.py
 │   │   ├── models/
-│   │   │   ├── registry.py         # ModelRegistry (load/unload/get)
-│   │   │   ├── base.py             # BaseModel interface
-│   │   │   ├── vqa.py              # VQA pipeline wrapper
-│   │   │   ├── caption.py          # Caption pipeline wrapper (may reuse VQA)
-│   │   │   ├── grounding.py        # Grounding DINO + SAM wrapper
-│   │   │   ├── change_detection.py # Change detection model wrapper
-│   │   │   ├── change_vqa.py       # Change VQA wrapper
-│   │   │   └── optical_sar.py      # Optical-SAR fusion wrapper
+│   │   │   ├── registry.py
+│   │   │   ├── base.py
+│   │   │   ├── vqa.py
+│   │   │   ├── grounding.py
+│   │   │   ├── change_detection.py
+│   │   │   ├── change_vqa.py
+│   │   │   └── optical_sar.py
 │   │   ├── output/
-│   │   │   ├── integrator.py       # Combine model outputs into response
-│   │   │   ├── evidence.py         # Generate overlay images, change maps
-│   │   │   └── trace.py            # Build execution trace JSON
+│   │   │   ├── integrator.py
+│   │   │   ├── evidence.py
+│   │   │   └── trace.py
 │   │   └── utils/
-│   │       ├── image_utils.py      # Image loading, resize, preprocessing
-│   │       └── config.py           # Settings (model paths, VRAM limits)
-│   ├── models/                     # Model weights directory
-│   │   ├── vqa/
-│   │   ├── grounding/
-│   │   ├── change/
-│   │   └── fusion/
-│   ├── results/                    # Generated evidence images
+│   │       ├── image_utils.py
+│   │       └── config.py
+│   ├── models/
+│   ├── results/
 │   └── requirements.txt
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── app/
-│   │   │   ├── page.tsx            # Main page
-│   │   │   └── layout.tsx          # Root layout
-│   │   ├── components/
-│   │   │   ├── ImageUpload.tsx      # Drag-drop image upload
-│   │   │   ├── QueryInput.tsx       # Text input + example queries
-│   │   │   ├── ResultPanel.tsx      # Answer + evidence display
-│   │   │   ├── ExecutionTrace.tsx   # Trace visualization
-│   │   │   └── ConfidenceBadge.tsx  # Confidence score badge
-│   │   └── hooks/
-│   │       └── useAnalysis.ts       # API call hook
 │   └── package.json
 │
 ├── data/
-│   └── demo/                       # Pre-selected demo images
-│       ├── vqa/
-│       ├── grounding/
-│       ├── change/
-│       └── optical_sar/
+│   └── demo/
 │
-├── training/                       # Fine-tuning scripts
-│   ├── finetune_vlm.py
-│   └── configs/
-│
-├── mds/                            # Original planning docs
-├── mds2/                           # This POC sprint docs
-└── README.md
+├── training/
+├── README.md
+└── docs/
 ```
 
----
-
-## API Contract (POC — Single Endpoint)
+## API Contract
 
 ### `POST /api/analyze`
 
-**Request:** `multipart/form-data`
+Request: `multipart/form-data`
 
 | Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `images` | File[] | Yes | 1 or 2 satellite images |
-| `query` | string | Yes | Natural language question |
-| `modalities` | string | No | Comma-separated: "optical", "sar", "optical,sar" |
-| `dates` | string | No | Comma-separated dates: "2024-01,2024-08" |
+|---|---|---|---|
+| `images` | `File[]` | Yes | One or two satellite images |
+| `query` | `string` | Yes | Natural-language question |
+| `modalities` | `string` | No | `optical`, `sar`, or `optical,sar` |
+| `dates` | `string` | No | Comma-separated dates such as `2024-01,2024-08` |
 
-**Response:** `application/json`
+Response payload example:
 
 ```json
 {
@@ -182,51 +137,28 @@ sih26/
 }
 ```
 
----
+## Tech Stack
 
-## Tech Stack (POC — Minimal)
-
-| Layer | Choice | Why (POC context) |
-|-------|--------|-------------------|
-| Frontend | Next.js 14 + Tailwind + shadcn/ui | AI can scaffold in < 1 hour |
-| Backend | FastAPI + Python 3.11 | ML ecosystem, fast, auto-docs |
-| ML | PyTorch 2.x + Transformers | Standard, all models support it |
-| Image IO | Pillow + rasterio | GeoTIFF support |
-| Model loading | Sequential on-demand | 8GB VRAM constraint |
-| State mgmt | React useState (no Zustand needed for POC) | Simplicity |
-| Deployment | `uvicorn` + `npm run dev` | No Docker needed for demo |
-
----
+| Layer | Choice | Why |
+|---|---|---|
+| Frontend | Next.js 14 + Tailwind + shadcn/ui | Fast UI iteration and consistent UX |
+| Backend | FastAPI + Python 3.11 | Strong ML ecosystem and quick deployment |
+| ML | PyTorch + Transformers | Standard stack for remote-sensing models |
+| Image IO | Pillow + Rasterio | GeoTIFF support |
+| Model loading | Sequential on-demand | Fits the VRAM budget |
+| Deployment | `uvicorn` + `npm run dev` | Simple local demo path |
 
 ## GPU Memory Strategy
 
-```
-RTX 4060 — 8 GB VRAM
+A single RTX 4060 has 8 GB VRAM, so the system should avoid loading all large models simultaneously. The registry layer manages this by loading, inferring, and unloading on demand.
 
-Rule: ONE major model at a time
-Strategy: Load → Infer → Unload → Next
+**Rule:** one major model at a time.
 
-Pipeline VRAM Timeline:
-──────────────────────────────────────────
-VQA request:
-  Load VLM (5.5 GB) → Answer → Unload
-  Peak: 5.5 GB ✅
+**Examples:**
 
-Grounding request:
-  Load GDINO (0.7 GB) + SAM (0.35 GB) → Detect + Segment → Unload
-  Peak: 1.1 GB ✅
+- VQA: ~5.5 GB peak
+- Grounding: ~1.1 GB peak
+- Change detection + VLM: ~5.5 GB peak
+- Optical-SAR + VLM: ~6.0 GB peak
 
-Change request:
-  Load CD model (0.15 GB) → Change map → Unload
-  Load VLM (5.5 GB) → Describe → Unload
-  Peak: 5.5 GB ✅
-
-Optical-SAR request:
-  Load Fusion net (0.5 GB) → Fuse → Unload
-  Load VLM (5.5 GB) → Analyze → Unload
-  Peak: 5.5 GB ✅
-──────────────────────────────────────────
-```
-
-> [!TIP]
-> The ModelRegistry handles all load/unload logic. Pipeline wrappers just call `registry.get("model_name")` and the registry handles VRAM management.
+> The model registry is responsible for handling load/unload behavior so that the wrapper implementations stay focused on inference logic.

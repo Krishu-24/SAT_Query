@@ -1,14 +1,10 @@
 # 05 — Frontend Plan (POC)
 
-> Next.js frontend — what to build, component breakdown, integration.
-
----
+> Frontend architecture, interaction flow, and the component structure needed to deliver a polished demo experience.
 
 ## Owner: M2 (Frontend Lead)
 
----
-
-## Setup (Day 1, first 30 min)
+## Setup
 
 ```bash
 npx create-next-app@latest frontend --typescript --tailwind --app --src-dir
@@ -18,98 +14,95 @@ npx shadcn@latest add button card input textarea badge tabs separator progress a
 npm install axios lucide-react react-dropzone
 ```
 
-**Environment:**
+Environment:
+
 ```env
 # frontend/.env.local
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
----
+## Page Layout
 
-## Page Layout (Single Page App)
-
-```
+```text
 ┌────────────────────────────────────────────────────────────┐
-│  🛰️ SatQuery AI                              [Health ●]  │
+│ SatQuery AI                                      [Health] │
 ├────────────────────────────────────────────────────────────┤
 │                                                            │
-│  ┌──────────────────────┐  ┌──────────────────────┐       │
-│  │   IMAGE 1 (Required) │  │   IMAGE 2 (Optional) │       │
-│  │   [Drop Zone]        │  │   [Drop Zone]        │       │
-│  │   Modality: [▼]      │  │   Modality: [▼]      │       │
-│  └──────────────────────┘  └──────────────────────┘       │
+│  ┌──────────────────────┐  ┌──────────────────────┐      │
+│  │ Image 1 (Required)   │  │ Image 2 (Optional)    │      │
+│  │ Drop zone            │  │ Drop zone            │      │
+│  │ Modality: Optical    │  │ Modality: Optical    │      │
+│  └──────────────────────┘  └──────────────────────┘      │
 │                                                            │
-│  ┌────────────────────────────────────────────────────┐   │
-│  │  💬 Ask a question...                    [Analyze] │   │
-│  └────────────────────────────────────────────────────┘   │
-│  [VQA] [Describe] [Grounding] [Change] [Optical+SAR]      │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ Ask a question...                     [Analyze]   │    │
+│  └────────────────────────────────────────────────────┘    │
+│  [VQA] [Describe] [Grounding] [Change] [Optical + SAR]    │
 │                                                            │
-│  ┌────────── RESULT ──────────────────────────────────┐   │
-│  │  Answer text                    Confidence: 87%    │   │
-│  │  Evidence images (change map, overlay, etc.)       │   │
-│  └────────────────────────────────────────────────────┘   │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ Result panel                                        │    │
+│  │ Answer text                                87%     │    │
+│  │ Evidence images and highlighted regions             │    │
+│  └────────────────────────────────────────────────────┘    │
 │                                                            │
-│  ┌────────── EXECUTION TRACE ─────────────────────────┐   │
-│  │  ✅ Input: 2 images, GeoTIFF, Optical, Bi-temporal │   │
-│  │  🎯 Task: CHANGE ANALYSIS (90%)                    │   │
-│  │  🔧 Step 1: change_detection (1240ms) ✓            │   │
-│  │  🔧 Step 2: rs_vlm (890ms) ✓                       │   │
-│  │  ⏱️ Total: 2.13s                                   │   │
-│  └────────────────────────────────────────────────────┘   │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ Execution Trace                                     │    │
+│  │ Input validated: 2 images, GeoTIFF, optical         │    │
+│  │ Task: change analysis (90%)                          │    │
+│  │ Step 1: change_detection (1240ms)                    │    │
+│  │ Step 2: rs_vlm (890ms)                               │    │
+│  │ Total: 2.13s                                         │    │
+│  └────────────────────────────────────────────────────┘    │
 └────────────────────────────────────────────────────────────┘
 ```
 
----
+## Component Breakdown
 
-## Components to Build
+| # | Component | Timing | Purpose |
+|---|---|---|---|
+| 1 | `ImageUpload.tsx` | Day 1 morning | drag-and-drop input and preview |
+| 2 | `QueryInput.tsx` | Day 1 morning | natural-language input and example prompts |
+| 3 | `ResultPanel.tsx` | Day 1 afternoon | answer, confidence, and evidence section |
+| 4 | `ExecutionTrace.tsx` | Day 1 afternoon | trace visualization and pipeline summary |
+| 5 | `ConfidenceBadge.tsx` | Day 1 afternoon | confidence display |
+| 6 | `page.tsx` | Day 1 evening | main dashboard composition |
+| 7 | `useAnalysis.ts` | Day 1 evening | API integration and request state |
+| 8 | Evidence image display | Day 2 morning | render backend outputs cleanly |
+| 9 | Loading and error states | Day 2 afternoon | improve feedback and resilience |
+| 10 | Final polish | Day 3 morning | responsive layout and visual finish |
 
-### Build Order:
+## Key Component Specifications
 
-| # | Component | When | Time Est |
-|---|-----------|------|----------|
-| 1 | `ImageUpload.tsx` | Day 1 Morning | 1 hour |
-| 2 | `QueryInput.tsx` | Day 1 Morning | 30 min |
-| 3 | `ResultPanel.tsx` | Day 1 Afternoon | 1 hour |
-| 4 | `ExecutionTrace.tsx` | Day 1 Afternoon | 1 hour |
-| 5 | `ConfidenceBadge.tsx` | Day 1 Afternoon | 15 min |
-| 6 | `page.tsx` (main page) | Day 1 Evening | 1 hour |
-| 7 | `useAnalysis.ts` (API hook) | Day 1 Evening | 30 min |
-| 8 | Evidence images display | Day 2 Morning | 1 hour |
-| 9 | Loading states + errors | Day 2 Afternoon | 1 hour |
-| 10 | Polish + responsive | Day 3 Morning | 2 hours |
+### `ImageUpload.tsx`
 
----
+- drag-and-drop file upload
+- accepted formats: `.tif`, `.tiff`, `.png`, `.jpg`, `.jpeg`
+- preview for PNG/JPEG inputs and placeholder handling for TIFF
+- modality selector for optical vs SAR
+- optional date field
+- remove/reset action
 
-## Key Component Specs
+### `QueryInput.tsx`
 
-### ImageUpload.tsx
-- react-dropzone for drag & drop
-- Accept: .tif, .tiff, .png, .jpg, .jpeg
-- Show image preview (for PNG/JPEG; placeholder for TIFF)
-- Modality dropdown: Optical / SAR
-- Optional date input
-- Remove button
+- textarea for natural-language prompts
+- clickable example prompts
+- submit action with loading states
+- support for multi-line entry where needed
 
-### QueryInput.tsx
-- Textarea for natural language query
-- Example query badges (click to fill)
-- Enter to submit (Shift+Enter for newline)
-- Analyze button with loading spinner
+### `ResultPanel.tsx`
 
-### ResultPanel.tsx
-- Answer text in a highlighted box
-- Confidence badge (green > 80%, yellow > 60%, red < 60%)
-- Evidence images grid (from backend URLs)
-- Detected regions list with per-region confidence
+- answer text in a structured summary block
+- confidence indicator with thresholds for low, medium, and high certainty
+- evidence image grid from backend response
+- list of detected regions with per-region confidence
 
-### ExecutionTrace.tsx
-- Collapsible card
-- Input validation summary (badges for format, modality, etc.)
-- Detected task with confidence
-- Pipeline steps with status icons (✅/❌) and timing
-- Total time
+### `ExecutionTrace.tsx`
 
----
+- collapsible trace card
+- validation summary for format, modality, and image count
+- detected task and confidence
+- list of pipeline steps with timing and status
+- cumulative execution time
 
 ## API Integration
 
@@ -131,7 +124,7 @@ export function useAnalysis() {
     setResult(null);
 
     const form = new FormData();
-    images.forEach(img => form.append("images", img));
+    images.forEach((img) => form.append("images", img));
     form.append("query", query);
     form.append("modalities", modalities.join(","));
 
@@ -149,25 +142,22 @@ export function useAnalysis() {
 }
 ```
 
----
-
-## Running
+## Running the Frontend
 
 ```bash
 cd frontend
 npm run dev
-# → http://localhost:3000
 ```
 
----
+Open http://localhost:3000 in the browser.
 
 ## POC Simplifications
 
-| Full Version | POC Version |
-|-------------|-------------|
-| OpenLayers satellite viewer | Simple `<img>` tags |
-| Zustand state management | React useState |
-| Download PDF report | Skip |
-| Dark mode | Skip |
-| Animations | Minimal (loading spinner only) |
-| Responsive mobile | Desktop-only is fine |
+| Full version | POC version |
+|---|---|
+| OpenLayers-based viewer | simple image tags |
+| Zustand state management | React `useState` |
+| PDF export | omitted |
+| advanced dark mode styling | minimal visual polish |
+| complex animations | loading state only |
+| mobile-first responsiveness | desktop-focused demo |
