@@ -1,51 +1,42 @@
-# 🛰️ SatQuery AI — Backend (POC)
+<div align="center">
+  <h1>🛰️ SatQuery AI</h1>
+  <p><strong>Agentic Remote Sensing Analysis System — SIH 2026 / ISRO-SAC</strong></p>
+  <p>
+    <a href="#-project-overview">Overview</a> •
+    <a href="#-what-is-currently-working">Current Status</a> •
+    <a href="#-quick-start-how-to-run">Quick Start</a> •
+    <a href="#-team-tasks--next-steps">Team Tasks</a> •
+    <a href="CONTRIBUTING.md">Git Workflow</a>
+  </p>
+</div>
 
-This repository contains the backend and agent logic for the SatQuery AI POC, built for SIH 2026 / ISRO-SAC.
+---
 
-> **Note:** This repository specifically focuses on **Member 3 (Agent/Router Lead)** deliverables and the **Qwen2.5-VL integration**. Other pipelines (TinyCD, Grounding DINO, etc.) are stubbed for end-to-end testing.
+## 🌍 Project Overview
 
-## ✨ Member 3 (Agent/Router) Progress
+SatQuery AI is a unified, agentic AI system for satellite imagery analysis. Instead of forcing users to navigate complex GIS software, users can upload satellite images (Optical or SAR) and simply type natural language queries like *"What changed?"* or *"Highlight the buildings"*. 
 
-I have successfully completed all M3 deliverables for this POC:
-- **Project Structure**: Set up the full FastAPI backend architecture.
-- **Agent Logic**: Built the `RuleBasedRouter` (Zero-VRAM), `InputValidator`, and `PipelineExecutor`.
-- **Output Engine**: Built the `TraceBuilder`, `OutputIntegrator`, and `evidence.py` overlay generators.
-- **VLM Integration**: Wrote the `QwenVLMWrapper` and successfully connected it to the local pipeline.
-- **UI & API**: Built the FastAPI routes and a functional `frontend/index.html` to prove end-to-end connectivity.
-- **Team Enablement**: Created model stubs for all M4 pipelines so other members can test their code without crashes.
+Our intelligent backend **automatically routes** the query to the correct machine learning pipeline (VQA, Grounding, Change Detection, or Optical-SAR Fusion), executes the models, and returns an evidence-backed answer.
 
-> **Team Members (M1, M2, M4, M5):** Please read [docs/STUBS_DOCUMENTATION.md](docs/STUBS_DOCUMENTATION.md) for exact instructions on where to inject your code, replace my stubs, and build the final UI!
+---
 
-## 🌟 Features
+## 🚀 What is Currently Working
 
-- **Agentic Routing:** Automatically routes user queries and images to the correct task pipeline (VQA, Grounding, Change Detection, Change VQA, Optical-SAR Fusion).
-- **Zero-VRAM Rule-Based Router:** Uses deterministic keyword and input analysis to select pipelines without needing an LLM.
-- **Input Validation:** Strict checking for image counts, formats, dimensions, and cross-modal/temporal properties.
-- **Execution Trace:** Full transparency into how the agent analyzed the input, routed the request, and executed the models.
-- **Qwen2.5-VL Integration:** Real integration with `Qwen2.5-VL-7B-Instruct-AWQ` for VQA, captioning, and change descriptions.
-- **No Output Fallback:** If the Qwen model weights are not available or there is no GPU, the system gracefully falls back to a 'Model output not available' response, allowing you to still test the UI and agent routing.
+**Member 3 (Agent & Router Lead)** has completed the core infrastructure and agentic routing layer. The repository currently features:
 
-## 📂 Project Structure
+1. **🧠 Zero-VRAM Rule-Based Router**: Deterministically analyzes inputs and keywords to instantly classify queries into one of 6 task types without requiring a massive LLM.
+2. **🏗️ Execution Pipeline**: A fully functional `PipelineExecutor` and `OutputIntegrator` that loads models, passes context between them, and generates an `ExecutionTrace` for explainable AI.
+3. **🤖 Qwen2.5-VL Integration**: A fully integrated wrapper for `Qwen2.5-VL-7B-Instruct-AWQ` to handle standard VQA and captioning. 
+4. **🔌 API & UI**: A working FastAPI backend (`/api/analyze`) and a sleek test UI (`frontend/index.html`) to demonstrate end-to-end connectivity.
+5. **🛡️ Fallback Mode**: If you don't have a GPU or haven't downloaded the massive ML weights, the system gracefully falls back to returning `"Model output not available"`, preventing crashes and allowing frontend development to proceed unhindered.
 
-```
-SAT_Query/
-├── backend/
-│   ├── app/
-│   │   ├── agent/         # Router, Validator, Executor (M3 Core)
-│   │   ├── api/           # Routes and Schemas
-│   │   ├── models/        # Model registry, Qwen wrapper, and stubs
-│   │   ├── output/        # Trace builder, integrator, evidence generators
-│   │   └── utils/         # Config and image utils
-│   ├── results/           # Generated evidence images (temp)
-│   └── tests/             # Tests for router and validator
-├── frontend/              # Minimal single-page HTML test app
-└── data/demo/             # Demo images (add your own)
-```
+---
 
-## 🚀 Setup & Installation
+## ⚡ Quick Start (How to Run)
 
-### 1. Backend Environment
+To run the current codebase and test the routing logic and UI:
 
+### 1. Setup the Backend
 ```bash
 cd backend
 python -m venv venv
@@ -53,50 +44,46 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Download Qwen Model (Optional)
-
-To run the real VLM, you need to download `Qwen2.5-VL-7B-Instruct-AWQ`.
-
+### 2. Download the VLM (Optional, ~5GB)
+If you want to run real inference instead of seeing the "No Output" fallback, download the Qwen model:
 ```bash
 pip install huggingface_hub
 huggingface-cli download Qwen/Qwen2.5-VL-7B-Instruct-AWQ --local-dir backend/models/vqa/qwen25vl
 ```
 
-If you don't do this, the backend will automatically run in **NO OUTPUT MODE** (it will just return 'Model output not available', but the routing logic will still execute).
-
-### 3. Run the Backend
-
+### 3. Start the Server
 ```bash
 cd backend
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 4. Run the Test UI
-
-Just open `frontend/index.html` in your browser, or serve it:
-
+### 4. Test the UI
+Open a new terminal and serve the frontend:
 ```bash
 cd frontend
 python -m http.server 3000
 ```
+Navigate to `http://localhost:3000` in your browser. Try uploading an image and asking different questions to watch the agent route your request!
 
-Then visit `http://localhost:3000`.
+---
 
-## 🧪 Testing
+## 🎯 Team Tasks & Next Steps
 
-Run the automated tests for the router and validator:
+This repository uses **Stub Models** (`backend/app/models/`) as placeholders. The rest of the team must now replace these stubs with production code and build out the final UI. 
 
-```bash
-cd backend
-pytest tests/ -v
-```
+**Before writing code, please read our [🤝 Git Workflow & Contributing Guide](CONTRIBUTING.md) to learn how to branch, PR, and keep your code synced!**
 
-## 🔄 Agentic Flow (How it works)
+### 👩‍💻 M1 & M2: Web Platform
+- **M1 (Backend)**: Take ownership of `backend/app/api/routes.py`. Add production error handling, rate limiting, and migrate temp file storage to AWS S3 if required for deployment.
+- **M2 (Frontend)**: The current `frontend/index.html` is just a dummy app to prove the API works. Rebuild this into a robust **React/Next.js** dashboard featuring glassmorphism, micro-animations, and a premium dark mode as specified in the original workflow docs. Use the current HTML file as your API reference.
 
-1. **User uploads image(s) & types a query**
-2. **`InputValidator`** checks format, counts, and identifies modalities/temporal status.
-3. **`RuleBasedRouter`** looks at the inputs + query keywords to decide the `TaskType` and which models to use.
-4. **`PipelineExecutor`** asks the `ModelRegistry` to load the needed models. (The registry unloads old models if VRAM is tight).
-5. **Models run** in sequence, passing context between them.
-6. **`OutputIntegrator`** collects the final answer, confidence, and generated evidence.
-7. **`TraceBuilder`** packages the exact reasoning into an `ExecutionTrace`.
+### 🔬 M4: ML Pipelines (Replace the Stubs!)
+Your task is to open the files in `backend/app/models/` and replace the stubs with real ML inference. Currently, they just return `"Model output not available"`.
+- **`grounding.py`**: Implement real **Grounding DINO** (target extraction & bounding boxes) and **SAM 2.1** (segmentation masks).
+- **`change_detection.py`**: Implement **TinyCD** to process bi-temporal images and return a change map and changed pixel percentage.
+- **`optical_sar.py`**: Implement the **EfficientNet-B0** dual encoder for cross-modal fusion classification.
+- **`change_vqa.py`**: Write the prompt engineering to feed 2 images + the TinyCD change map into Qwen2.5-VL to answer specific change questions.
+
+### 💾 M5 & M6: Datasets, Deployment & Presentation
+- **M5 (Data)**: Ensure all weights (Qwen, GDINO, SAM, TinyCD) are hosted centrally. Fine-tune the Qwen model using LoRA if time permits, and swap out the weights in `backend/models/`.
+- **M6 (Presentation)**: Start building the SIH slides. Highlight our **Agentic Router** and **Execution Trace (Explainable AI)**, as these are major competitive advantages over standard ML dashboards. 
