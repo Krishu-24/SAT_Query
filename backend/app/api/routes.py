@@ -34,7 +34,16 @@ async def analyze(
     logger.info(f"[{request_id}] New request — Query: '{query}' | Images: {len(images)}")
 
     # ── 1. Save uploaded images to one request-scoped temp directory ──
-    image_paths = await save_uploads(images, request_id)
+    try:
+        image_paths = await save_uploads(images, request_id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail={"errors": [str(e)]})
+    except OSError as e:
+        logger.error(f"[{request_id}] Failed to save uploads: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"errors": ["Failed to save uploaded images."]},
+        )
 
     try:
         # ── 2. Parse metadata ──
@@ -110,6 +119,18 @@ async def analyze(
         )
 
         return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"[{request_id}] Unhandled error during analysis")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "errors": ["Internal error while processing the request."],
+                "request_id": request_id,
+                "message": str(e),
+            },
+        )
     finally:
         # Upload temp files are no longer needed once the pipeline has run
         # (success or failure) — evidence images are saved separately under

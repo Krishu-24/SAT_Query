@@ -7,8 +7,9 @@ and serves the analysis API.
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -84,3 +85,13 @@ app.mount("/results", StaticFiles(directory=str(settings.RESULTS_DIR)), name="re
 
 # ── API routes ──
 app.include_router(router, prefix="/api")
+
+
+# ── Safety net: never let an unhandled exception crash the demo ──
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception(f"Unhandled exception on {request.method} {request.url.path}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": {"errors": ["An unexpected server error occurred."]}},
+    )
