@@ -40,3 +40,44 @@ rejection, and cleanup (including the "already gone" case).
 cd backend
 python -m pytest tests/test_storage.py -v
 ```
+
+## Error Handling
+
+**Files:** [`app/api/routes.py`](app/api/routes.py),
+[`app/main.py`](app/main.py)
+
+Previously `/api/analyze` only handled the *expected* failure cases it
+checked for explicitly (bad query, invalid image format/count). Anything
+unexpected further down the pipeline — a model failing to load, an OOM
+during inference, a bug in a pipeline step — propagated as an unhandled
+exception, which FastAPI turns into a bare `500` with no useful body, and
+which could take the whole process down mid-demo.
+
+Two layers now catch this:
+
+1. **Route-level (`routes.py`)** — `save_uploads()` errors are translated
+   explicitly: `ValueError` (empty upload) → `422`, `OSError` (disk write
+   failure) → `500`. The rest of the pipeline
+   (validate → route → execute → integrate) is wrapped in
+   `try/except HTTPException: raise / except Exception: → 500`, so any
+   unexpected failure returns a structured body instead of crashing:
+
+   ```json
+   {
+     "errors": ["Internal error while processing the request."],
+     "request_id": "a1b2c3d4",
+     "message": "<exception str, for debugging>"
+   }
+   ```
+
+   The existing `finally: cleanup_upload_dir(request_id)` (see Upload
+   Storage above) still runs whether the request succeeded, failed
+   validation, or hit this new catch-all.
+
+2. **App-level (`main.py`)** — a global
+   `@app.exception_handler(Exception)` catches anything outside
+   `/api/analyze` (e.g. `/api/health`, middleware) as a last resort, so no
+   single unhandled exception can crash the server during the demo.
+
+Both layers only translate failures into HTTP responses — they don't
+change what the validator, router, or model pipeline actually do.
