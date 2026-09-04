@@ -14,6 +14,15 @@ transformers>=4.45.0
 accelerate>=0.34.0
 qwen-vl-utils>=0.0.8
 
+# Optical-SAR fusion (BIFOLD BigEarthNet v2.0 ResNet-18) -- M4
+# NOTE: configilm pulls in lightning-bolts, whose malformed version constraint
+# breaks pip>=24.1's strict metadata validation. Install with pip<24.1
+# (pip install "pip<24.1") before installing this file, or configilm's
+# install will fail with a metadata error.
+rasterio>=1.4.0
+configilm>=0.7.1
+reben-publication
+
 # Image processing
 Pillow>=10.4.0
 numpy>=1.26.0
