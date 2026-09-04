@@ -1,80 +1,65 @@
 # SatQuery AI
 
-Agentic remote sensing analysis system for SIH 2026 / ISRO-SAC.
+Agentic remote-sensing query system: upload satellite imagery, ask a natural-language question, and get a routed analysis plan with an explainable debug trace.
 
-## Project Overview
+```text
+You  -->  Frontend (Next.js)  -->  Backend (FastAPI)  -->  Router (planner)
+                                        |                      |
+                                        v                      v
+                                   Debug trace            Ollama Qwen3
+                                   + model stubs          (or rule fallback)
+```
 
-SatQuery AI enables users to upload one or more satellite images and ask natural-language questions such as:
+## Quick start (one click)
 
-- "What changed between these two dates?"
-- "Highlight the water body in this image."
-- "Estimate the built-up increase in the eastern region."
+| OS | Action |
+|----|--------|
+| **Windows** | Double-click `START_SATQUERY.bat` |
+| **macOS** | Double-click `START_SATQUERY.command` (see [docs/SETUP.md](docs/SETUP.md) if Gatekeeper blocks it) |
 
-The system routes each request to the correct model pipeline, executes the analysis, and returns an evidence-backed response with confidence and execution trace metadata.
+The launcher checks requirements, installs missing dependencies, starts the API + UI, and opens:
 
-## Current Status
+**http://localhost:3000**
 
-The repository currently includes:
+Full machine-specific notes: **[docs/SETUP.md](docs/SETUP.md)**  
+How the system works (flowcharts): **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
-1. A deterministic, zero-VRAM routing layer that classifies requests into multiple task types without relying on a large LLM.
-2. A pipeline execution framework that coordinates model loading, inference, and output aggregation.
-3. Qwen2.5-VL integration for VQA and captioning workflows.
-4. A working FastAPI backend and browser-based demo UI for end-to-end validation.
-5. A fallback mode that keeps the app stable when model weights are unavailable or GPU resources are limited.
+## Project layout
 
-## Quick Start
+```text
+SAT_Query/
+├── START_SATQUERY.bat / .command   # one-click launchers
+├── scripts/                        # shared setup + start logic
+├── frontend/                       # Next.js UI + Debug Mode
+├── backend/                        # FastAPI + Shiven adapter
+├── router/                         # Query planner / agent core (Shiven)
+├── contrib/                        # optional specialist model work-in-progress
+├── data/                           # demo assets
+├── docs/                           # ARCHITECTURE + SETUP
+└── training/                       # fine-tune placeholders
+```
 
-### 1. Set up the backend
+## Manual run (if you prefer)
 
 ```bash
+# Backend
 cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
+python -m venv .venv
+# Windows: .venv\Scripts\activate   |  macOS: source .venv/bin/activate
+pip install -r requirements-lite.txt
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 
-### 2. Download the VLM (optional)
-
-```bash
-pip install huggingface_hub
-huggingface-cli download Qwen/Qwen2.5-VL-7B-Instruct-AWQ --local-dir backend/models/vqa/qwen25vl
-```
-
-### 3. Start the API
-
-```bash
-cd backend
-uvicorn app.main:app --reload --port 8000
-```
-
-### 4. Run the frontend demo
-
-```bash
+# Frontend (other terminal)
 cd frontend
-python -m http.server 3000
+cp .env.example .env.local   # or write NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+npm install
+npm run dev
 ```
 
-Open http://localhost:3000 and upload an image to test the workflow.
+Optional planner LLM: install [Ollama](https://ollama.com) and `ollama pull qwen3:4b-instruct`.
 
-## Team Tasks and Next Steps
+## Status
 
-The project currently uses stub implementations in `backend/app/models/` as placeholders. The next phase is to replace these stubs with production-ready model logic and complete the user-facing interface.
-
-Before making changes, review the team workflow in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-### M1 and M2: Web Platform
-
-- **M1 (Backend):** Own `backend/app/api/routes.py`, add robust validation and error handling, and prepare deployment-ready storage patterns.
-- **M2 (Frontend):** Replace the demo UI with a polished dashboard experience based on the current API contract and workflow documentation.
-
-### M4: ML Pipelines
-
-- `grounding.py`: implement Grounding DINO and SAM-based region extraction.
-- `change_detection.py`: integrate change detection and measure changed areas.
-- `optical_sar.py`: implement the cross-modal fusion pipeline.
-- `change_vqa.py`: build targeted prompting for change-focused reasoning.
-
-### M5 and M6: Data, Deployment, and Presentation
-
-- **M5 (Data):** centralize model weights and prepare fine-tuning data and adapter workflows.
-- **M6 (Presentation):** build the final demo narrative around the routing layer and explainable execution trace.
+- **Routing / planning:** Shiven QueryPlanner (Ollama Qwen3 → rule fallback)
+- **Specialist CV/VLM weights:** not required for the demo — responses return `Model not available` with honest Debug metadata (`model not loaded`)
+- **UI:** map, chat, Debug Mode, synthetic location fallback kept for demo polish

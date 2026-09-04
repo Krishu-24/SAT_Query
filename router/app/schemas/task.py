@@ -1,0 +1,11 @@
+from enum import Enum
+
+
+class TaskType(str, Enum):
+    VQA = "VQA"
+    CAPTIONING = "CAPTIONING"
+    GROUNDING = "GROUNDING"
+    CHANGE_DETECTION = "CHANGE_DETECTION"
+    CHANGE_VQA = "CHANGE_VQA"
+    OPTICAL_SAR = "OPTICAL_SAR"
+    UNKNOWN = "UNKNOWN" 

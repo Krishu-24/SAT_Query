@@ -73,8 +73,8 @@ class InputValidator:
         )
 
         # ── Count check ──
-        if len(image_paths) == 0:
-            errors.append("No images provided. Please upload 1 or 2 satellite images.")
+        # 0 images is valid — a text-only conversational query. Routed to a
+        # dedicated task in RuleBasedRouter rather than the image pipelines.
         if len(image_paths) > 2:
             errors.append(
                 f"Maximum 2 images allowed, but {len(image_paths)} were provided. "
@@ -121,6 +121,13 @@ class InputValidator:
                     )
 
                 format_info.append({
+                    # Index into the ORIGINAL image_paths list. Entries are
+                    # skipped for images that fail a check above, so a
+                    # positional zip against `modalities`/`dates` downstream
+                    # would silently attach the wrong image's metadata once
+                    # any image is skipped. Carrying the source index keeps
+                    # that correlation correct.
+                    "index": i,
                     "filename": p.name,
                     "size": [width, height],
                     "bands": bands,

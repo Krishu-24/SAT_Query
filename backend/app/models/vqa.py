@@ -17,6 +17,11 @@ from loguru import logger
 
 from app.models.base import BaseModelWrapper
 from app.utils.config import settings
+from app.utils.synthesize import synthesize_answer
+
+# Shared by the generate() call and the telemetry that reports it, so the
+# two can never drift apart.
+MAX_NEW_TOKENS = 512
 
 
 class QwenVLMWrapper(BaseModelWrapper):
@@ -103,9 +108,15 @@ class QwenVLMWrapper(BaseModelWrapper):
     # ── Real inference methods ──
 
     def _vqa(self, context: dict) -> dict:
-        """Single-image Visual Question Answering."""
-        image_path = context["images"][0]
+        """Single-image Visual Question Answering (or a conversational reply
+        when no image was attached — routed here for text-only queries)."""
+        images = context["images"]
         query = context["query"]
+
+        if not images:
+            return {"answer": synthesize_answer(query, [], "vqa"), "confidence": None}
+
+        image_path = images[0]
 
         prompt = (
             "You are a remote sensing expert analyzing satellite imagery. "
@@ -114,7 +125,7 @@ class QwenVLMWrapper(BaseModelWrapper):
         )
 
         answer = self._infer_single(image_path, prompt)
-        return {"answer": answer, "confidence": self._estimate_confidence(answer)}
+        return {"answer": answer, "confidence": None}
 
     def _caption(self, context: dict) -> dict:
         """Generate detailed RS caption."""
@@ -131,7 +142,7 @@ class QwenVLMWrapper(BaseModelWrapper):
         )
 
         answer = self._infer_single(image_path, prompt)
-        return {"answer": answer, "confidence": self._estimate_confidence(answer)}
+        return {"answer": answer, "confidence": None}
 
     def _describe_changes(self, context: dict) -> dict:
         """Bi-temporal change description using 2 images."""
@@ -159,7 +170,7 @@ class QwenVLMWrapper(BaseModelWrapper):
         )
 
         answer = self._infer_multi(images, prompt)
-        return {"answer": answer, "confidence": self._estimate_confidence(answer)}
+        return {"answer": answer, "confidence": None}
 
     def _analyze_fused(self, context: dict) -> dict:
         """Analyze result after optical-SAR fusion."""
@@ -189,7 +200,7 @@ class QwenVLMWrapper(BaseModelWrapper):
         )
 
         answer = self._infer_multi(images, prompt)
-        return {"answer": answer, "confidence": self._estimate_confidence(answer)}
+        return {"answer": answer, "confidence": None}
 
     # ── Core Qwen inference ──
 
@@ -226,7 +237,14 @@ class QwenVLMWrapper(BaseModelWrapper):
         return self._run_qwen_inference(messages)
 
     def _run_qwen_inference(self, messages: list[dict]) -> str:
-        """Execute Qwen2.5-VL inference and return generated text."""
+        """Execute Qwen2.5-VL inference and return generated text.
+
+        Also records real token counts and generation throughput on
+        `self.last_telemetry` for the execution trace. These are read off
+        tensors that already exist — no extra work, and no estimation.
+        """
+        import time
+
         import torch
         from qwen_vl_utils import process_vision_info
 
@@ -243,18 +261,37 @@ class QwenVLMWrapper(BaseModelWrapper):
             return_tensors="pt",
         ).to(self.model.device)
 
+        # Note: this counts the vision tokens the processor expands images
+        # into, not just the text prompt — which is why it looks large. That
+        # is the honest figure: it is what the model actually consumed.
+        prompt_tokens = int(inputs.input_ids.shape[-1])
+
+        gen_start = time.perf_counter()
         with torch.no_grad():
             generated_ids = self.model.generate(
                 **inputs,
-                max_new_tokens=512,
+                max_new_tokens=MAX_NEW_TOKENS,
                 do_sample=False,
             )
+        gen_ms = (time.perf_counter() - gen_start) * 1000
 
         # Trim input tokens from output
         generated_ids_trimmed = [
             out_ids[len(in_ids):]
             for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
+
+        completion_tokens = int(sum(t.shape[-1] for t in generated_ids_trimmed))
+        self.last_telemetry = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "generation_time_ms": round(gen_ms, 1),
+            "tokens_per_sec": (
+                round(completion_tokens / (gen_ms / 1000), 2) if gen_ms > 0 else None
+            ),
+            "max_new_tokens": MAX_NEW_TOKENS,
+            "device": self.device,
+        }
 
         output_text = self.processor.batch_decode(
             generated_ids_trimmed,
@@ -264,33 +301,23 @@ class QwenVLMWrapper(BaseModelWrapper):
 
         return output_text[0].strip() if output_text else "Unable to generate response."
 
-    # ── Confidence estimation ──
-
-    def _estimate_confidence(self, answer: str) -> float:
-        """
-        Heuristic confidence based on answer characteristics.
-        Longer, more detailed answers suggest higher confidence.
-        """
-        if not answer:
-            return 0.3
-
-        words = len(answer.split())
-        if words > 50:
-            return 0.88
-        elif words > 30:
-            return 0.82
-        elif words > 15:
-            return 0.75
-        elif words > 5:
-            return 0.65
-        return 0.50
-
     # ── No Output mode (no GPU / no weights) ──
 
     def _mock_run(self, action: str, context: dict) -> dict:
-        """Return 'Model output not available' when model cannot be loaded."""
-        logger.info(f"[NO OUTPUT MODE] Returned empty response for action: {action}")
-        return {
-            "answer": "Model output not available",
-            "confidence": 0.0,
-        }
+        """Synthesize a dynamic, input-aware placeholder when the real model
+        cannot be loaded, instead of a fixed 'Model output not available'."""
+        task_hint = {
+            "answer_question": "vqa",
+            "generate_caption": "caption",
+            "describe_changes": "change",
+            "analyze_fused": "fusion",
+        }.get(action, "vqa")
+
+        answer = synthesize_answer(context["query"], context["images"], task_hint)
+        logger.info(f"[NO OUTPUT MODE] Synthesized placeholder for action: {action}")
+        # No real model ran, so there is nothing to count and no real
+        # confidence to report — a templated placeholder answer paired with
+        # any number (fixed or heuristic) would misrepresent it as a genuine
+        # model score.
+        self.last_telemetry = None
+        return {"answer": answer, "confidence": None}

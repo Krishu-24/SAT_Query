@@ -2,20 +2,35 @@
 venv/
 env/
 .env
-.venv
+.env.local
+.venv/
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+*.egg-info/
+.mypy_cache/
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+npm-debug.log*
+yarn-error.log*
 
 # IDEs and OS
 .DS_Store
 .idea/
 .vscode/
+Thumbs.db
 
-# SatQuery specific
+# SatQuery runtime
 backend/results/
 backend/models/
-backend/venv/
+scripts/logs/
+*.log
+
+# Optional local model weights
+router/.venv/
