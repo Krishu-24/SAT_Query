@@ -20,6 +20,13 @@ class Settings:
         str(MODELS_DIR / "vqa" / "qwen25vl"),
     )
 
+    # ── Grounding (Grounding DINO + SAM 2.1) ──
+    GDINO_MODEL_PATH: str = os.environ.get(
+        "GDINO_MODEL_PATH",
+        str(MODELS_DIR / "grounding" / "gdino"),
+    )
+    SAM_MODEL_ID: str = os.environ.get("SAM_MODEL_ID", "facebook/sam2.1-hiera-tiny")
+
     # ── Server ──
     HOST: str = os.environ.get("HOST", "0.0.0.0")
     PORT: int = int(os.environ.get("PORT", "8000"))
