@@ -8,7 +8,7 @@ One-click launch on **Windows** and **macOS**, plus manual fallback and troubles
 
 | Tool | Version | Required? | Notes |
 |------|---------|-----------|-------|
-| Python | 3.11+ | Yes | Backend API |
+| Python | **3.11–3.13** (3.12 recommended) | Yes | Backend API. **Not 3.14** — pydantic-core has no wheels / PyO3 build fails. Launcher creates `backend/.venv` with pinned `requirements-lite.txt`. |
 | Node.js | 18+ LTS | Yes | Frontend |
 | npm | comes with Node | Yes | |
 | Ollama | latest | Optional | Powers the small Qwen3 planner; without it, rule-based fallback still works |
@@ -47,7 +47,16 @@ Optional Homebrew helpers (used automatically when present):
 
 ```bash
 brew install python@3.12 node
+# Ensure python3.12 is on PATH (Homebrew may not replace default python3 if it is 3.14)
 brew install --cask ollama
+```
+
+If setup fails on `pydantic-core` / Python 3.14:
+
+```bash
+brew install python@3.12
+rm -rf backend/.venv
+# re-run START_SATQUERY.command — it prefers python3.12 and recreates the venv
 ```
 
 ---
@@ -130,7 +139,7 @@ To try real stub model execution later: `SKIP_MODEL_INFERENCE=false` (still not 
 |-------|-----------------|-----|
 | Port 3000 or 8000 busy | Launcher / bind error | Close other apps using those ports; re-run (launcher tries to free them on Windows) |
 | Node not installed | Setup fails at npm | Install Node LTS from https://nodejs.org/ then re-run |
-| Python too old | Setup fails | Install Python 3.12+ and ensure it is on PATH |
+| Python too old / **3.14** | `pydantic-core` build fails / PyO3 max 3.13 | `brew install python@3.12` (Mac) or install 3.12 (Windows); `rm -rf backend/.venv`; re-run launcher |
 | Ollama missing | Amber **fallback** in Debug | Optional — install Ollama or ignore; routing still works |
 | macOS “cannot be opened” | Gatekeeper | `chmod +x` + right-click Open / remove quarantine (above) |
 | Blank UI / network error | “Couldn’t reach the backend” | Confirm `:8000` health: http://127.0.0.1:8000/api/health |

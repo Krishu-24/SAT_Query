@@ -413,33 +413,74 @@ try {
 
     $pythonOk = $false
     $usePyLauncher = $false
-    foreach ($cand in @("python", "py")) {
-        if (Test-Cmd $cand) {
-            try {
+    $pythonCmd = $null
+    # Prefer 3.12 / 3.13 / 3.11 - pydantic-core does not build on 3.14 yet
+    foreach ($cand in @("py", "python")) {
+        if (-not (Test-Cmd $cand)) { continue }
+        try {
+            if ($cand -eq "py") {
+                foreach ($spec in @("-3.12", "-3.13", "-3.11")) {
+                    $verOut = & py $spec --version 2>&1 | Out-String
+                    if ($verOut -match "Python (\d+)\.(\d+)") {
+                        $major = [int]$Matches[1]
+                        $minor = [int]$Matches[2]
+                        if ($major -eq 3 -and $minor -ge 11 -and $minor -le 13) {
+                            $pythonOk = $true
+                            $usePyLauncher = $true
+                            $script:PyLauncherSpec = $spec
+                            $pythonCmd = "py $spec"
+                            Write-Ok ("Python {0}.{1} found (py {2})" -f $major, $minor, $spec)
+                            break
+                        }
+                    }
+                }
+                if ($pythonOk) { break }
+            } else {
                 $verOut = & $cand --version 2>&1 | Out-String
                 if ($verOut -match "Python (\d+)\.(\d+)") {
                     $major = [int]$Matches[1]
                     $minor = [int]$Matches[2]
-                    if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
+                    if ($major -eq 3 -and $minor -ge 11 -and $minor -le 13) {
                         $pythonOk = $true
-                        $usePyLauncher = ($cand -eq "py")
+                        $usePyLauncher = $false
+                        $pythonCmd = $cand
                         Write-Ok ("Python {0}.{1} found" -f $major, $minor)
                         break
                     }
-                    Write-Warn ("Python {0}.{1} is too old (need 3.11+)" -f $major, $minor)
+                    if ($major -eq 3 -and $minor -ge 14) {
+                        Write-Warn ("Python {0}.{1} is too new (need 3.11-3.13; pydantic unsupported on 3.14)" -f $major, $minor)
+                    } else {
+                        Write-Warn ("Python {0}.{1} is unsupported (need 3.11-3.13)" -f $major, $minor)
+                    }
                 }
-            } catch {}
-        }
+            }
+        } catch {}
     }
     if (-not $pythonOk) {
-        Write-Warn "Python 3.11+ not found - attempting winget install..."
+        Write-Warn "Compatible Python 3.11-3.13 not found - attempting winget install of 3.12..."
         [void](Try-WingetInstall "Python.Python.3.12" "Python 3.12")
         Refresh-Path
-        if (Test-Cmd "python") {
-            $pythonOk = $true
-            Write-Ok ("Python installed: {0}" -f ((& python --version 2>&1 | Out-String).Trim()))
-        } else {
-            Write-Fail "Install Python 3.12 from https://www.python.org/downloads/ (enable Add to PATH), then re-run."
+        if (Test-Cmd "py") {
+            $verOut = & py -3.12 --version 2>&1 | Out-String
+            if ($verOut -match "Python 3\.12") {
+                $pythonOk = $true
+                $usePyLauncher = $true
+                $script:PyLauncherSpec = "-3.12"
+                Write-Ok ("Python installed: {0}" -f $verOut.Trim())
+            }
+        }
+        if (-not $pythonOk -and (Test-Cmd "python")) {
+            $verOut = & python --version 2>&1 | Out-String
+            if ($verOut -match "Python (\d+)\.(\d+)") {
+                $major = [int]$Matches[1]; $minor = [int]$Matches[2]
+                if ($major -eq 3 -and $minor -ge 11 -and $minor -le 13) {
+                    $pythonOk = $true
+                    Write-Ok $verOut.Trim()
+                }
+            }
+        }
+        if (-not $pythonOk) {
+            Write-Fail "Install Python 3.12 from https://www.python.org/downloads/ (enable Add to PATH), then re-run. Do not use 3.14."
         }
     }
 
@@ -464,24 +505,55 @@ try {
 
     Write-Step "3/9  Backend virtualenv + Python packages"
     if (-not (Test-Path $ReqLite)) { throw "Missing $ReqLite" }
-    Write-Ok "requirements-lite.txt present"
+    Write-Ok "requirements-lite.txt present (pinned deps)"
 
     $venvPython = Join-Path $VenvDir "Scripts\python.exe"
     $venvPip    = Join-Path $VenvDir "Scripts\pip.exe"
+    $needVenv = $false
     if (-not (Test-Path $venvPython)) {
-        Write-Info "Creating venv..."
-        if ($usePyLauncher) { & py -3 -m venv $VenvDir }
-        else { & python -m venv $VenvDir }
-        Write-Ok "venv created"
+        $needVenv = $true
     } else {
-        Write-Ok "venv already exists - skipping recreate"
+        try {
+            $venvVer = & $venvPython -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>&1 | Out-String
+            $venvVer = $venvVer.Trim()
+            if ($venvVer -match "^(\d+)\.(\d+)$") {
+                $vm = [int]$Matches[1]; $vn = [int]$Matches[2]
+                if ($vm -ne 3 -or $vn -lt 11 -or $vn -gt 13) {
+                    Write-Warn ("Existing venv is Python {0} (unsupported) - recreating" -f $venvVer)
+                    Remove-Item -Recurse -Force $VenvDir -ErrorAction SilentlyContinue
+                    $needVenv = $true
+                } else {
+                    Write-Ok ("venv already exists (Python {0}) - skipping recreate" -f $venvVer)
+                }
+            } else {
+                Write-Warn "Could not read venv Python version - recreating"
+                Remove-Item -Recurse -Force $VenvDir -ErrorAction SilentlyContinue
+                $needVenv = $true
+            }
+        } catch {
+            $needVenv = $true
+        }
     }
 
-    Write-Info "Installing / verifying Python packages..."
+    if ($needVenv) {
+        Write-Info "Creating venv with compatible Python 3.11-3.13..."
+        if ($usePyLauncher) {
+            $spec = if ($script:PyLauncherSpec) { $script:PyLauncherSpec } else { "-3.12" }
+            & py $spec -m venv $VenvDir
+        } else {
+            & python -m venv $VenvDir
+        }
+        if (-not (Test-Path $venvPython)) { throw "venv creation failed" }
+        Write-Ok ("venv created: {0}" -f ((& $venvPython --version 2>&1 | Out-String).Trim()))
+    }
+
+    Write-Info "Installing pinned packages from requirements-lite.txt..."
     & $venvPython -m pip install --upgrade pip -q
-    & $venvPip install -r $ReqLite -q
-    if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
-    Write-Ok "Backend dependencies ready"
+    & $venvPip install -r $ReqLite
+    if ($LASTEXITCODE -ne 0) {
+        throw "pip install failed. Use Python 3.11-3.13 (not 3.14). See backend/requirements-lite.txt"
+    }
+    Write-Ok "Backend dependencies ready (pinned)"
 
     Ensure-DeviceRole
     $role = $script:Role

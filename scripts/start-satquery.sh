@@ -223,28 +223,67 @@ fi
 
 step "2/9  Checking system requirements"
 
+# Prefer 3.12/3.13/3.11 — pydantic-core wheels fail on Python 3.14+ (PyO3 max 3.13).
 PYTHON_BIN=""
-if have_cmd python3; then
+python_version_ok() {
+  local bin="$1"
+  local ver major minor
+  ver=$("$bin" -c 'import sys; print("%d.%d"%sys.version_info[:2])' 2>/dev/null || true)
+  [[ -z "$ver" ]] && return 1
+  major=${ver%%.*}
+  minor=${ver#*.}
+  if [[ "$major" -eq 3 && "$minor" -ge 11 && "$minor" -le 13 ]]; then
+    echo "$ver"
+    return 0
+  fi
+  return 1
+}
+
+for cand in python3.12 python3.13 python3.11; do
+  if have_cmd "$cand"; then
+    if ver=$(python_version_ok "$cand"); then
+      PYTHON_BIN="$cand"
+      ok "Python $ver found ($cand) — using for backend venv"
+      break
+    fi
+  fi
+done
+
+if [[ -z "$PYTHON_BIN" ]] && have_cmd python3; then
   PYVER=$(python3 -c 'import sys; print("%d.%d"%sys.version_info[:2])' 2>/dev/null || true)
   MAJOR=${PYVER%%.*}
   MINOR=${PYVER#*.}
-  if [[ -n "$MAJOR" && ( "$MAJOR" -gt 3 || ( "$MAJOR" -eq 3 && "$MINOR" -ge 11 ) ) ]]; then
+  if [[ "$MAJOR" -eq 3 && "$MINOR" -ge 11 && "$MINOR" -le 13 ]]; then
     PYTHON_BIN="python3"
-    ok "Python $PYVER found"
+    ok "Python $PYVER found (python3)"
+  elif [[ "$MAJOR" -eq 3 && "$MINOR" -ge 14 ]]; then
+    warn "python3 is $PYVER — too new for SatQuery deps (need 3.11-3.13; pydantic/PyO3 unsupported on 3.14)"
   else
-    warn "Python $PYVER is too old (need 3.11+)"
+    warn "Python $PYVER is unsupported (need 3.11-3.13)"
   fi
 fi
+
 if [[ -z "$PYTHON_BIN" ]]; then
-  warn "Python 3.11+ not found - attempting brew install..."
+  warn "Compatible Python not found - attempting brew install python@3.12..."
   try_brew_install "python@3.12" "Python 3.12" || true
   hash -r 2>/dev/null || true
-  if have_cmd python3; then
-    PYTHON_BIN="python3"
-    ok "Python installed: $($PYTHON_BIN --version 2>&1)"
-  else
-    fail "Install Python 3.12+ then re-run."
-  fi
+  # Homebrew often installs as python3.12, not default python3
+  for cand in python3.12 /opt/homebrew/bin/python3.12 /usr/local/bin/python3.12; do
+    if have_cmd "$cand" || [[ -x "$cand" ]]; then
+      if [[ -x "$cand" ]]; then
+        if ver=$(python_version_ok "$cand"); then
+          PYTHON_BIN="$cand"
+          ok "Python $ver ready ($cand)"
+          break
+        fi
+      fi
+    fi
+  done
+fi
+
+if [[ -z "$PYTHON_BIN" ]]; then
+  fail "Install Python 3.12 (recommended):  brew install python@3.12"
+  fail "Then re-run. Do not use Python 3.14 for this project yet."
 fi
 
 NODE_OK=0
@@ -278,17 +317,35 @@ step "3/9  Backend virtualenv + Python packages"
 [[ -f "$REQ_LITE" ]] || { fail "Missing $REQ_LITE"; exit 1; }
 ok "requirements-lite.txt present"
 
+# Recreate venv if missing OR built with unsupported Python (e.g. leftover 3.14)
+NEED_VENV=0
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-  info "Creating venv..."
+  NEED_VENV=1
+else
+  VENV_VER=$("$VENV_DIR/bin/python" -c 'import sys; print("%d.%d"%sys.version_info[:2])' 2>/dev/null || echo "0.0")
+  VMAJOR=${VENV_VER%%.*}
+  VMINOR=${VENV_VER#*.}
+  if [[ "$VMAJOR" -ne 3 || "$VMINOR" -lt 11 || "$VMINOR" -gt 13 ]]; then
+    warn "Existing venv is Python $VENV_VER (unsupported) - recreating with $PYTHON_BIN"
+    rm -rf "$VENV_DIR"
+    NEED_VENV=1
+  else
+    ok "venv already exists (Python $VENV_VER) - skipping recreate"
+  fi
+fi
+
+if [[ "$NEED_VENV" -eq 1 ]]; then
+  info "Creating venv with $PYTHON_BIN..."
   "$PYTHON_BIN" -m venv "$VENV_DIR"
   ok "venv created"
-else
-  ok "venv already exists — skipping recreate"
 fi
 
 info "Installing / verifying Python packages..."
 "$VENV_DIR/bin/python" -m pip install --upgrade pip -q
-"$VENV_DIR/bin/pip" install -r "$REQ_LITE" -q
+if ! "$VENV_DIR/bin/pip" install -r "$REQ_LITE" -q; then
+  fail "pip install failed. Ensure Python is 3.11-3.13 (not 3.14). Current venv: $($VENV_DIR/bin/python --version 2>&1)"
+  exit 1
+fi
 ok "Backend dependencies ready"
 
 step "Device role (asked every launch)"
