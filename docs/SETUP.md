@@ -2,6 +2,8 @@
 
 One-click launch on **Windows** and **macOS**, role-aware multi-device setup, manual fallback, and troubleshooting.
 
+**Product overview & how to run (start here):** [../README.md](../README.md) · [docs index](README.md)
+
 ---
 
 ## Requirements

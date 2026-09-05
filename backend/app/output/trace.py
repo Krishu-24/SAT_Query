@@ -16,12 +16,14 @@ field is None rather than a plausible-looking placeholder.
 """
 
 import time
-from typing import Optional
+from typing import Any, Optional
+
+from loguru import logger
 
 from app.agent.router import ROUTER_VERSION, RoutingDecision
 from app.agent.validator import ValidationResult
 from app.agent.executor import StepResult
-from app.output.sanitize import sanitize_payload
+from app.output.sanitize import json_safe, sanitize_payload
 
 
 # Every key `ModelTelemetry` (schemas.py) and the TS mirror declare. A wrapper
@@ -52,10 +54,20 @@ def _telemetry(raw: Optional[dict]) -> Optional[dict]:
     Missing keys become None (absent means unmeasured, which is null, not a
     missing field). Unknown keys are dropped rather than passed through, so a
     wrapper cannot silently extend the wire contract.
+
+    `last_telemetry` is a plain attribute any wrapper may assign anything to.
+    A non-dict used to raise AttributeError here and take down trace building
+    for an otherwise-successful request; values are also passed through
+    json_safe so a non-finite tokens_per_sec cannot reach the renderer.
     """
     if not raw:
         return None
-    return {key: raw.get(key) for key in _TELEMETRY_KEYS}
+    if not isinstance(raw, dict):
+        logger.warning(
+            f"Ignoring non-dict telemetry from a wrapper: {type(raw).__name__}"
+        )
+        return None
+    return {key: json_safe(raw.get(key)) for key in _TELEMETRY_KEYS}
 
 
 def _selection_reason(model_name: str, decision: RoutingDecision) -> str:
@@ -99,6 +111,10 @@ class TraceBuilder:
         stage_ms: Optional[dict] = None,
         request_t0: Optional[float] = None,
         debug: bool = False,
+        spatial: Optional[dict] = None,
+        land_cover_check: Optional[dict] = None,
+        remote_dispatch: Optional[dict] = None,
+        fallback_strategy: Optional[dict] = None,
     ) -> dict:
         """
         Build the complete execution trace.
@@ -115,6 +131,18 @@ class TraceBuilder:
             request_t0: perf_counter() taken at the top of the handler, used
                 for true wall-clock latency.
             debug: When True, include sanitized payload snapshots per step.
+            spatial: Ground-overlap facts from preflight (bbox IoU, whether the
+                check was enforced, per-image bbox source). Empty for a
+                single-image request, which has nothing to overlap.
+            land_cover_check: Fast land-cover pre-check outcome (threshold,
+                breakdown, land_pct, whether it passed) — None when no
+                optical image was present to check. See
+                app/agent/land_cover_check.py.
+            remote_dispatch: Whether the remote VLM was actually dispatched,
+                and to which paired node — None only when the caller has
+                nothing to report (mirrors spatial/land_cover_check).
+            fallback_strategy: Whether a fallback response was used instead
+                of the model path, and why.
 
         Returns:
             Dict matching the ExecutionTrace API schema.
@@ -141,7 +169,7 @@ class TraceBuilder:
         # it does.
         pipeline_steps = [self._step(r, debug=debug) for r in step_results]
         selected_models = self._selected_models(decision, registry)
-        input_composition = self._input_composition(validation, metadata)
+        input_composition = self._input_composition(validation, metadata, spatial)
 
         # Real handler wall clock when the route provided a start marker;
         # otherwise fall back to the step sum so this stays usable standalone.
@@ -215,6 +243,7 @@ class TraceBuilder:
                 "upload_ms": round(stage_ms.get("upload_ms", 0.0), 3),
                 "validation_ms": round(stage_ms.get("validation_ms", 0.0), 3),
                 "routing_ms": round(stage_ms.get("routing_ms", 0.0), 3),
+                "preflight_ms": round(stage_ms.get("preflight_ms", 0.0), 3),
                 "execution_ms": round(stage_ms.get("execution_ms", 0.0), 3),
                 "integration_ms": round(stage_ms.get("integration_ms", 0.0), 3),
                 "pipeline_steps_ms": pipeline_steps_ms,
@@ -222,8 +251,15 @@ class TraceBuilder:
                 # legitimately exceed the total, but float noise shouldn't
                 # surface as -0.0001.
                 "other_ms": round(max(0.0, total_time_ms - measured), 3),
+                "land_cover_ms": round(stage_ms.get("land_cover_ms", 0.0), 3),
             },
             "total_time_ms": total_time_ms,
+            # None on every request with no optical image to check (nothing
+            # for this endpoint to report) — never a fabricated all-zero
+            # breakdown or a pass/fail guess.
+            "land_cover_check": land_cover_check,
+            "remote_dispatch": remote_dispatch,
+            "fallback_strategy": fallback_strategy,
         }
 
     def _selected_models(self, decision: RoutingDecision, registry) -> list[dict]:
@@ -283,7 +319,12 @@ class TraceBuilder:
             "depends_on": None,
         }
 
-    def _input_composition(self, validation: ValidationResult, metadata: dict) -> dict:
+    def _input_composition(
+        self,
+        validation: ValidationResult,
+        metadata: dict,
+        spatial: Optional[dict] = None,
+    ) -> dict:
         """Per-image detail, entirely from data the validator already collected."""
         dates = metadata.get("dates", []) or []
         images = []
@@ -325,4 +366,9 @@ class TraceBuilder:
             # EPSG is parsed then discarded client-side (geotiffClient.ts);
             # the backend never reads it, so claiming one would be a guess.
             "crs": None,
+            # Ground-overlap facts from preflight. `enforced: false` means the
+            # rasters carry no real georeferencing, so extract_bbox synthesized
+            # their footprints from a filename hash and no overlap claim can be
+            # made — `bbox_iou` there describes invented boxes, not ground.
+            "spatial": json_safe(spatial) if spatial else None,
         }

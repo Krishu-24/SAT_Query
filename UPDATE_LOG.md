@@ -2,9 +2,10 @@
 
 **Base remote:** [https://github.com/Krishu-24/SAT_Query](https://github.com/Krishu-24/SAT_Query)  
 **Base tip this work started from:** `8bf5845` — *Restructure SatQuery into a pushable app with Shiven router integration and one-click launchers*  
-**Current tip (this log):** `6ccd39a` — *Document workstream C…* (code behavior tip: `eb62b0d` single-VQA routing)  
+**Current tip (this log):** Workstream D — teammate hardening + land-cover merged; final docs hub  
 **Purpose of this file:** Describe every intentional change made on top of that base so another contributor can merge their branch against ours without guessing intent.  
-**Not a git log.** Prefer reading this + the file lists below over `git log`.
+**Not a git log.** Prefer reading this + the file lists below over `git log`.  
+**Product entry:** [README.md](README.md)
 
 Related older notes (validator-only): `UPDATES.md`  
 Specs that drove this work (do not treat as runtime code):
@@ -16,7 +17,7 @@ Specs that drove this work (do not treat as runtime code):
 
 ## How to use this when merging
 
-1. Read **Workstreams** in order (A → B → C). C is follow-up hardening after the first multi-device ship.
+1. Read **Workstreams** in order (A → B → C → D).
 2. Compare your change list against **Hotspots** — those files are most likely to conflict.
 3. Prefer **ours** for new packages (`backend/app/node/`, hybrid executor, role scripts) unless you already reinvented the same layer.
 4. Prefer **careful merge** on shared files (`routes.py`, `validator.py`, `router.py`, `start-satquery.ps1` / `.sh`, `README.md`, Debug UI).
@@ -229,6 +230,42 @@ Example prompt that was mis-routed to VQA + captioning + grounding/SAM:
 
 ---
 
+## Workstream D — Teammate final merge (hardening + land-cover + UI)
+
+Merged from `satquery-test` (`3f7c46a` line) into this tree while **keeping** SatQuery folder structure, multi-device `node/`, hybrid executor, role scripts, and docs hub.
+
+### D1 — Backend hardening (Phase 1 + 2)
+
+See **[CHANGELOG.md](CHANGELOG.md)** for the full audit trail. Highlights:
+
+- Streamed uploads + size budgets (`api/uploads.py`)
+- Unified `{"detail":{"errors":[...]}}` error envelope; CORS tightened
+- Preflight / spatial guards, inference lane, raster hygiene (`raster_io.py`)
+- FastAPI pin ≥ 0.115.3; large boundary/resilience test suites
+
+### D2 — Land-cover pre-check
+
+- Parallel with routing on optical images (`land_cover_check.py` + `models/land_cover.py`)
+- Threshold can short-circuit remote VLM; outcome in `execution_trace.land_cover_check`
+
+### D3 — Frontend polish
+
+- Chat/panel UI shape, map marker timing after camera flight, Next.js badge tweak vs NodeStatus
+
+### D4 — Docs (this repo)
+
+- Final root **README** as documentation hub + how-to-run
+- `docs/README.md` index; ARCHITECTURE/SETUP linked from root
+- `satquery-test/` removed after port (single source tree)
+
+### Intentionally preserved from earlier workstreams
+
+- `backend/app/node/*`, `hybrid_executor.py`, role launchers  
+- Compound analytical VQA routing (C4)  
+- UPDATE_LOG A→C narrative  
+
+---
+
 ## Shared / small supporting edits
 
 | Path | Why |
@@ -269,8 +306,8 @@ Safer to take **their** feature commits into a branch, then re-apply our `node/`
 
 ## One-paragraph summary for chat/PR
 
-> On top of Krishu-24/SAT_Query `@8bf5845`, this tree adds (1) hard query↔input validation before routing, (2) a role-aware multi-device layer (Controller / Model Host / Full System) with LAN pairing, base64 transfer, Ollama `qwen2.5vl:7b`, hybrid executor, and always-reask role + clean shutdown, then (3) live fixes: registry reload after pair, sidebar node status, foreground Model Host logs, GeoTIFF→PNG for Ollama, and routing so multi-part analytical questions stay a single VQA instead of captioning + grounding/SAM.
+> On top of Krishu-24/SAT_Query `@8bf5845`, this tree adds validator hardening, a role-aware multi-device layer (Controller / Model Host / Full System) with remote `qwen2.5vl:7b`, live pairing/console/GeoTIFF fixes, single-VQA routing for analytical questions, then teammate Phase 1+2 API hardening, land-cover pre-check, and UI polish — documented from the root README hub through UPDATE_LOG A→D.
 
 ---
 
-*End of update log through docs refresh after `eb62b0d` / `6ccd39a`. Append the next workstream below if you continue this handoff.*
+*End of update log through Workstream D (teammate merge + final docs). Append below if you continue this handoff.*

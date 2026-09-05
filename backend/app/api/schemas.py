@@ -147,6 +147,12 @@ class StageTimings(BaseModel):
     upload_ms: float = 0.0
     validation_ms: float = 0.0
     routing_ms: float = 0.0
+    # Fast land-cover pre-check — runs CONCURRENTLY with routing_ms, not
+    # sequentially before or after it, so the two are not additive toward
+    # total_time_ms the way the other stages are.
+    land_cover_ms: float = 0.0
+    # Spatial/arity/modality preconditions, checked before any model loads.
+    preflight_ms: float = 0.0
     execution_ms: float = 0.0
     integration_ms: float = 0.0
     # Sum of PipelineStep.time_ms — what total_time_ms used to (wrongly) be.
@@ -154,6 +160,38 @@ class StageTimings(BaseModel):
     # total_time_ms minus the measured stages: trace building, response
     # assembly, and everything else inside the handler.
     other_ms: float = 0.0
+
+
+class LandCoverCheck(BaseModel):
+    """Outcome of the fast land-cover pre-check (see app/agent/land_cover_check.py).
+
+    None on the parent ExecutionTrace whenever no optical image was present
+    to check — never a fabricated breakdown for a request this never ran on.
+    """
+    threshold: float
+    # Category -> percentage. Values are None, not 0.0, when no real model
+    # is loaded — the stub reports "unknown," never an invented split.
+    breakdown: dict[str, Optional[float]] = {}
+    land_pct: Optional[float] = None
+    available: bool = False
+    # True/False once evaluated against threshold; None when land_pct is
+    # None (no real model — never coerced to a pass or a fail).
+    passed: Optional[bool] = None
+
+
+class RemoteDispatch(BaseModel):
+    """Whether the remote VLM was actually dispatched, and to which node."""
+    dispatched: bool = False
+    node_id: Optional[str] = None
+    task: Optional[str] = None
+
+
+class FallbackStrategy(BaseModel):
+    """Whether a fallback response replaced the model path, and why."""
+    triggered: bool = False
+    # "land_cover_below_threshold" | "remote_vlm_failed" | None
+    reason: Optional[str] = None
+    action: Optional[str] = None
 
 
 class ImageComposition(BaseModel):
@@ -169,6 +207,21 @@ class ImageComposition(BaseModel):
     date: Optional[str] = None
 
 
+class SpatialCheck(BaseModel):
+    """Ground-overlap facts from preflight, for a multi-image request.
+
+    `enforced` is the field that matters: it is False when one or both rasters
+    carry no GeoTIFF georeferencing, in which case `extract_bbox` synthesized
+    their footprints from a filename hash and `bbox_iou` describes invented
+    boxes rather than real ground. Only an enforced check can reject.
+    """
+    enforced: bool = False
+    bbox_iou: Optional[float] = None
+    image_1_source: Optional[str] = None
+    image_2_source: Optional[str] = None
+    gsd_ratio: Optional[float] = None
+
+
 class InputComposition(BaseModel):
     """What actually arrived, in more detail than ValidationInfo."""
     images: list[ImageComposition] = []
@@ -176,6 +229,8 @@ class InputComposition(BaseModel):
     total_size_mb: float = 0.0
     is_temporal: bool = False
     is_cross_modal: bool = False
+    # None for a single-image request — nothing to overlap.
+    spatial: Optional[SpatialCheck] = None
     # The backend never reads GeoTIFF CRS today (EPSG is parsed and then
     # discarded client-side in geotiffClient.ts). Null until that moves
     # server-side — never assumed to be EPSG:4326.
@@ -206,6 +261,9 @@ class ExecutionTrace(BaseModel):
     input_composition: Optional[InputComposition] = None
     # True when this request opted into payload snapshots.
     debug: bool = False
+    land_cover_check: Optional[LandCoverCheck] = None
+    remote_dispatch: Optional[RemoteDispatch] = None
+    fallback_strategy: Optional[FallbackStrategy] = None
 
 
 class AnalysisResponse(BaseModel):

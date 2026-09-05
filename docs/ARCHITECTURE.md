@@ -1,6 +1,8 @@
 # Architecture
 
-How SatQuery is wired today: launcher roles, analyze path (validator → router → hybrid / remote VLM), and where code lives.
+How SatQuery is wired today: launcher roles, analyze path (validator → land-cover ∥ planner → hybrid / remote VLM), and where code lives.
+
+**Start here for running the app:** [How to run](../README.md#how-to-run) · [Documentation hub](../README.md#documentation-hub) · [docs index](README.md)
 
 ---
 
@@ -11,21 +13,25 @@ flowchart LR
   U[User] --> FE[frontend<br/>Next.js :3000]
   FE -->|multipart POST /api/analyze| BE[backend<br/>FastAPI :8000]
   FE -->|POST /api/process-raster| BE
-  BE --> VAL[Validator]
-  VAL -->|ok| AD[Shiven adapter]
+  BE --> VAL[Validator + upload gate]
+  VAL -->|ok| SPLIT{parallel}
+  SPLIT --> LC[Land-cover check]
+  SPLIT --> AD[Shiven adapter]
   AD --> RT[router/<br/>QueryPlanner]
   RT -->|LLM plan| OL[Ollama<br/>qwen3:4b]
   RT -->|on failure| RB[Rule classifier]
   AD -->|coalesce analytical VQA| PIPE[Pipeline plan]
+  LC -->|below threshold| SHORT[Short-circuit answer]
   PIPE --> HY[HybridPipelineExecutor]
   HY -->|paired| NODE[Model Host :8100]
   NODE --> VL[Ollama qwen2.5vl:7b]
   HY -->|no host| UN[Unavailable / local]
   HY --> TRACE[Execution trace]
+  SHORT --> TRACE
   TRACE --> FE
 ```
 
-**Design rules:** Frontend UX stays intact. Backend is the integration boundary. Multi-device is a **node + hybrid executor** layer — not a second app. Router prompts/classifier may be tightened so one analytical question does not fan out into captioning + grounding.
+**Design rules:** Frontend UX stays intact. Backend is the integration boundary (hardened HTTP + resilient pipeline). Multi-device is a **node + hybrid executor** layer — not a second app. Land-cover runs in parallel with planning and may skip a costly remote VLM call when the land signal is too weak.
 
 ---
 
@@ -144,17 +150,22 @@ frontend/src/
   types/api.ts              response + telemetry
 
 backend/app/
-  api/routes.py             analyze / health
+  api/routes.py             analyze / health (+ land-cover parallel)
+  api/uploads.py            streamed upload budgets
   api/node_controller.py    /api/nodes/* pairing + status
   agent/validator.py        pre-router hard validation
-  agent/query_requirements.py / geo_checks.py
+  agent/preflight.py        arity / modality / spatial guards
+  agent/land_cover_check.py fast land-cover gate
+  agent/inference_lane.py   serialized inference
   agent/shiven_adapter.py   plan map + coalesce
   agent/hybrid_executor.py  remote rs_vlm then fallback
   agent/unavailable_executor.py
   agent/router.py           RuleBasedRouter (+ RoutingDecision)
-  node/                     Model Host package (host_app, client, registry, ollama_runtime, …)
+  node/                     Model Host package
+  models/land_cover.py      land-cover stub
+  utils/raster_io.py        raster helpers
   output/trace.py           Debug execution_trace
-  utils/config.py           ports, Ollama, role env
+  utils/config.py           ports, Ollama, role, land-cover threshold
 
 router/app/
   planner/                  LLM prompt + QueryPlanner
