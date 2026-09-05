@@ -35,6 +35,14 @@ _TELEMETRY_KEYS = (
     "tokens_per_sec",
     "max_new_tokens",
     "device",
+    # Multi-device (optional; null when local / unavailable)
+    "execution",
+    "node_id",
+    "runtime",
+    "model",
+    "request_id",
+    "error_code",
+    "latency_sec",
 )
 
 
@@ -155,6 +163,13 @@ class TraceBuilder:
                 "cross_modal": validation.is_cross_modal,
                 "compatible": validation.is_valid,
                 "warnings": validation.warnings,
+                # Optional hardening fields — ignored by older frontend consumers.
+                "status": getattr(
+                    getattr(validation, "status", None), "value", None
+                ),
+                "error_codes": list(getattr(validation, "error_codes", []) or []),
+                "footprint_check": getattr(validation, "footprint_check", None),
+                "requirements": getattr(validation, "requirements", None),
             },
             "input_composition": input_composition,
             "detected_task": decision.task_type.value,

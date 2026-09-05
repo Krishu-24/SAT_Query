@@ -22,7 +22,8 @@ The launcher checks requirements, installs missing dependencies, starts the API 
 **http://localhost:3000**
 
 Full machine-specific notes: **[docs/SETUP.md](docs/SETUP.md)**  
-How the system works (flowcharts): **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
+How the system works (flowcharts): **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**  
+Latest validation hardening notes: **[UPDATES.md](UPDATES.md)**
 
 ## Project layout
 
@@ -58,8 +59,31 @@ npm run dev
 
 Optional planner LLM: install [Ollama](https://ollama.com) and `ollama pull qwen3:4b-instruct`.
 
+## Running SatQuery on multiple devices
+
+Clone **the same repository** on every machine. Run the same startup script. Choose a role once (saved under `.satquery/`, gitignored).
+
+| Role | What starts | Models |
+|------|-------------|--------|
+| **Controller** | Frontend + FastAPI + router + small planner Qwen (`qwen3:4b-instruct`) | Does **not** pull the large VLM |
+| **Model Host** | Node API (`/node/*`) + Ollama | Hosts **`qwen2.5vl:7b`** (Qwen2.5-VL-7B Instruct) for VQA/captioning |
+| **Full System** | Controller stack + optional local host | Pulls planner + host VLM when enabled |
+
+**Pairing:** On Model Host, note LAN IP, port `8100`, and pairing code. On Controller (startup prompt or):
+
+```bash
+python scripts/pair_host.py <host-ip> 8100 <pairing-code>
+```
+
+Queries still go through the normal UI → `/api/analyze` → existing router → node registry → Model Host → Ollama VLM → answer + Debug trace (`Execution: REMOTE`).
+
+**Change role:** close the launcher (`Ctrl+C`) and run it again — role is asked **every** launch and cleared on exit (no reuse).
+
+Startup still **checks before installing**: existing venv, `node_modules`, and Ollama models are not re-downloaded if already present.
+
 ## Status
 
 - **Routing / planning:** Shiven QueryPlanner (Ollama Qwen3 → rule fallback)
-- **Specialist CV/VLM weights:** not required for the demo — responses return `Model not available` with honest Debug metadata (`model not loaded`)
-- **UI:** map, chat, Debug Mode, synthetic location fallback kept for demo polish
+- **VQA / captioning (distributed):** Model Host Ollama tag `qwen2.5vl:7b` (Qwen2.5-VL-7B Instruct) via SatQuery `/node/inference` (not raw Ollama from the Controller)
+- **Local specialist weights:** optional; default `SKIP_MODEL_INFERENCE=true` with honest Debug metadata when no remote host is paired
+- **UI:** map, chat, Debug Mode, remote node status in the sidebar

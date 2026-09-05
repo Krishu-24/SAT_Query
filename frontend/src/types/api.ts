@@ -28,6 +28,14 @@ export interface ModelTelemetry {
     tokens_per_sec: number | null;
     max_new_tokens: number | null;
     device: string | null;
+    /** Multi-device: "REMOTE" when inference ran on a Model Host */
+    execution?: string | null;
+    node_id?: string | null;
+    runtime?: string | null;
+    model?: string | null;
+    request_id?: string | null;
+    error_code?: string | null;
+    latency_sec?: number | null;
 }
 
 export interface PipelineStep {

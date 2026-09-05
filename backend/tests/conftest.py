@@ -94,11 +94,20 @@ def fake_registry_factory():
 
 
 @pytest.fixture
-def client():
-    """TestClient with the real app lifespan (builds the real registry)."""
+def client(monkeypatch):
+    """TestClient with the real app lifespan (builds the real registry).
+
+    Pins routing/inference flags so API contract tests exercise the in-repo
+    RuleBasedRouter + PipelineExecutor, independent of a developer's local
+    Ollama / SKIP_MODEL_INFERENCE defaults.
+    """
     from fastapi.testclient import TestClient
 
     from app.main import app
+    from app.utils.config import settings
+
+    monkeypatch.setattr(settings, "USE_SHIVEN_ROUTER", False)
+    monkeypatch.setattr(settings, "SKIP_MODEL_INFERENCE", False)
 
     with TestClient(app) as c:
         yield c

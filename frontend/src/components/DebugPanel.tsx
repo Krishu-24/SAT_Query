@@ -205,6 +205,75 @@ export default function DebugPanel({
                                 </div>
                             )}
                             <ModelChoiceReasoner models={trace.selected_models} />
+                            {trace.pipeline_steps.some(
+                                (s) =>
+                                    s.telemetry?.execution === "REMOTE" ||
+                                    (s.payload_snapshot as { execution?: string } | null)
+                                        ?.execution === "REMOTE"
+                            ) && (
+                                <div>
+                                    <h4 className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+                                        Remote execution
+                                    </h4>
+                                    <div className="space-y-1.5">
+                                        {trace.pipeline_steps
+                                            .filter(
+                                                (s) =>
+                                                    s.telemetry?.execution === "REMOTE" ||
+                                                    (s.payload_snapshot as { execution?: string } | null)
+                                                        ?.execution === "REMOTE"
+                                            )
+                                            .map((s) => {
+                                                const tel = (s.telemetry || {}) as Record<
+                                                    string,
+                                                    unknown
+                                                >;
+                                                const snap = (s.payload_snapshot || {}) as Record<
+                                                    string,
+                                                    unknown
+                                                >;
+                                                return (
+                                                    <div
+                                                        key={s.step}
+                                                        className="rounded-xl border border-sky-500/20 bg-sky-500/10 px-3 py-2 text-[11px] text-slate-300"
+                                                    >
+                                                        <p className="font-medium text-sky-200">
+                                                            Step {s.step}: {s.action} · REMOTE
+                                                        </p>
+                                                        <p>
+                                                            Node:{" "}
+                                                            {String(
+                                                                tel.node_id ??
+                                                                    snap.node_id ??
+                                                                    "—"
+                                                            )}
+                                                        </p>
+                                                        <p>
+                                                            Runtime:{" "}
+                                                            {String(
+                                                                tel.runtime ??
+                                                                    snap.runtime ??
+                                                                    "ollama"
+                                                            )}{" "}
+                                                            · Model:{" "}
+                                                            {String(
+                                                                tel.model ??
+                                                                    snap.model ??
+                                                                    s.model
+                                                            )}
+                                                        </p>
+                                                        <p>
+                                                            Status:{" "}
+                                                            {s.status === "success"
+                                                                ? "SUCCESS"
+                                                                : s.error || "FAILED"}
+                                                        </p>
+                                                    </div>
+                                                );
+                                            })}
+                                    </div>
+                                </div>
+                            )}
                             <PipelineWaterfall steps={trace.pipeline_steps} />
                             {trace.timings && (
                                 <StageTimingStrip

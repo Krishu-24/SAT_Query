@@ -83,6 +83,13 @@ class Settings:
         "1", "true", "yes",
     )
 
+    # ── Multi-device (optional env overrides; primary store is .satquery/device.json) ──
+    SATQUERY_ROLE: str = os.environ.get("SATQUERY_ROLE", "")
+    SATQUERY_NODE_PORT: int = int(os.environ.get("SATQUERY_NODE_PORT", "8100"))
+    SATQUERY_REMOTE_TIMEOUT: float = float(
+        os.environ.get("SATQUERY_REMOTE_TIMEOUT", "120")
+    )
+
 
 settings = Settings()
 

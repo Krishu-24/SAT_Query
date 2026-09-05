@@ -34,6 +34,7 @@ class ModelTelemetry(BaseModel):
     Populated only by wrappers that can genuinely measure them — today that
     is QwenVLMWrapper on a machine with weights present. Every stub wrapper
     and every no-weights fallback leaves this None rather than guessing.
+    Multi-device remote steps may also set execution/node_id/runtime/model.
     """
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
@@ -41,6 +42,13 @@ class ModelTelemetry(BaseModel):
     tokens_per_sec: Optional[float] = None
     max_new_tokens: Optional[int] = None
     device: Optional[str] = None
+    execution: Optional[str] = None
+    node_id: Optional[str] = None
+    runtime: Optional[str] = None
+    model: Optional[str] = None
+    request_id: Optional[str] = None
+    error_code: Optional[str] = None
+    latency_sec: Optional[float] = None
 
 
 class PipelineStep(BaseModel):

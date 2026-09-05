@@ -137,10 +137,28 @@ async def _run_analysis(
     if not query_valid:
         raise HTTPException(status_code=422, detail={"errors": [query_error]})
 
-    # ── 4. Validate images ──
-    validation = validator.validate(image_paths, metadata)
+    # ── 4. Validate images + query↔input sufficiency (before routing) ──
+    validation = validator.validate(image_paths, metadata, query=query)
     if not validation.is_valid:
-        raise HTTPException(status_code=422, detail={"errors": validation.errors})
+        # Keep `errors` as string list for the existing frontend contract;
+        # attach structured codes/status for clients that can use them.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "errors": validation.errors,
+                "status": getattr(validation.status, "value", str(validation.status)),
+                "codes": list(validation.error_codes),
+                "issues": [
+                    {
+                        "code": iss.code,
+                        "message": iss.message,
+                        "images": iss.images,
+                    }
+                    for iss in validation.issues
+                    if iss.code in validation.error_codes
+                ],
+            },
+        )
     validation_ms = (time.perf_counter() - validation_start) * 1000
 
     # ── 5. Route ──
@@ -166,6 +184,21 @@ async def _run_analysis(
             )
             decision = shiven.decision
             intent_decomposition = shiven.intent_decomposition
+            # Preserve spatial / sufficiency facts from validation on the plan
+            # without altering router core logic.
+            if intent_decomposition and validation.requirements:
+                for item in intent_decomposition:
+                    if isinstance(item, dict):
+                        item.setdefault(
+                            "spatial_constraint",
+                            validation.requirements.get("spatial_constraint"),
+                        )
+                        item.setdefault(
+                            "required_inputs",
+                            validation.requirements,
+                        )
+            if validation.requirements and decision.intent_decomposition is None:
+                decision.intent_decomposition = intent_decomposition
             logger.info(
                 f"[{request_id}] Shiven routed → {decision.task_type.value} "
                 f"[{decision.rule_id}] fallback={shiven.fallback_used} — "
@@ -186,27 +219,23 @@ async def _run_analysis(
     routing_ms = (time.perf_counter() - routing_start) * 1000
 
     # ── 6. Execute pipeline ──
+    # Hybrid executor: paired Model Hosts handle rs_vlm remotely; otherwise
+    # preserve SKIP_MODEL_INFERENCE / local PipelineExecutor behavior.
     registry = request.app.state.model_registry
     execution_start = time.perf_counter()
-    if app_settings.SKIP_MODEL_INFERENCE:
-        # Honest path when specialist weights are not available: still emit
-        # per-step trace rows (model name, query, images) without loading stubs.
-        from app.agent.unavailable_executor import UnavailableModelExecutor
+    from app.agent.hybrid_executor import HybridPipelineExecutor
 
-        step_results = UnavailableModelExecutor().execute(
-            decision.pipeline,
-            image_paths,
-            query,
-            request_id,
-            intent_decomposition=intent_decomposition
-            or getattr(decision, "intent_decomposition", None),
-        )
-    else:
-        from app.agent.executor import PipelineExecutor
-
-        step_results = PipelineExecutor(registry).execute(
-            decision.pipeline, image_paths, query, request_id
-        )
+    step_results = HybridPipelineExecutor(
+        registry,
+        skip_local_inference=app_settings.SKIP_MODEL_INFERENCE,
+    ).execute(
+        decision.pipeline,
+        image_paths,
+        query,
+        request_id,
+        intent_decomposition=intent_decomposition
+        or getattr(decision, "intent_decomposition", None),
+    )
     execution_ms = (time.perf_counter() - execution_start) * 1000
 
     # ── 7. Integrate output ──
@@ -291,10 +320,25 @@ async def health(request: Request):
         logger.warning(f"GPU status unavailable: {e}")
         gpu_mem = None
 
+    device = None
+    try:
+        from app.node.config_store import config_summary, load_device_config, local_ip
+        from app.node.registry import get_registry
+
+        cfg = load_device_config()
+        device = {
+            **(config_summary(cfg) if cfg else {"role": None}),
+            "lan_ip": local_ip(),
+            "paired_nodes": get_registry().status_payload().get("nodes", []),
+        }
+    except Exception as exc:
+        logger.debug(f"device status skipped: {exc}")
+
     return {
         "status": "healthy",
         "models_loaded": registry.list_loaded(),
         "gpu_available": gpu_available,
         "gpu_memory_used": gpu_mem,
         "registered_models": registry.list_all(),
+        "device": device,
     }

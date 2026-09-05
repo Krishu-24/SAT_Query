@@ -14,6 +14,9 @@ from loguru import logger
 
 from app.api.routes import router
 from app.api.raster import router as raster_router
+from app.api.node_controller import router as nodes_router
+from app.node.host_routes import router as host_router
+from app.node.config_store import DeviceRole, load_device_config, local_ip
 from app.utils.config import settings
 
 
@@ -21,6 +24,17 @@ from app.utils.config import settings
 async def lifespan(app: FastAPI):
     """Startup and shutdown logic."""
     logger.info("🚀 Starting SatQuery AI backend...")
+
+    cfg = load_device_config()
+    if cfg:
+        logger.info(
+            f"Device role={cfg.role} node_id={cfg.node_id} lan={local_ip()}"
+        )
+        if cfg.role == DeviceRole.MODEL_HOST.value:
+            logger.warning(
+                "device.json role is model_host — prefer app.node.host_app:app "
+                "on the node port; analyze API still loads for Full/Controller."
+            )
 
     # ── Register all models ──
     from app.models.registry import ModelRegistry
@@ -86,3 +100,7 @@ app.mount("/results", StaticFiles(directory=str(settings.RESULTS_DIR)), name="re
 # ── API routes ──
 app.include_router(router, prefix="/api")
 app.include_router(raster_router, prefix="/api")
+app.include_router(nodes_router, prefix="/api")
+# Model Host endpoints also mounted on Controller/Full System so a Full
+# System machine can host models locally and accept pairing.
+app.include_router(host_router)

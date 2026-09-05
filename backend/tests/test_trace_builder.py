@@ -259,6 +259,8 @@ def test_schema_validates_the_risky_shapes(validation, decision, registry):
     assert set(telemetry) == {
         "prompt_tokens", "completion_tokens", "generation_time_ms",
         "tokens_per_sec", "max_new_tokens", "device",
+        "execution", "node_id", "runtime", "model", "request_id",
+        "error_code", "latency_sec",
     }
     assert telemetry["prompt_tokens"] == 100
     assert telemetry["device"] is None

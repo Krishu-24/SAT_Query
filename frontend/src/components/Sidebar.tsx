@@ -16,6 +16,7 @@ import {
     Bug,
 } from "lucide-react";
 import type { ChatSession } from "@/types/api";
+import NodeStatus from "./NodeStatus";
 
 interface SidebarProps {
     sessions: ChatSession[];
@@ -266,6 +267,8 @@ export default function Sidebar({
                     )}
                 </div>
             </div>
+
+            <NodeStatus collapsed={collapsed} />
         </aside>
     );
 }
