@@ -340,8 +340,13 @@ if [[ "$NEED_VENV" -eq 1 ]]; then
   ok "venv created"
 fi
 
-info "Installing / verifying Python packages..."
+info "Installing / verifying Python packages (pinned requirements-lite.txt)..."
 "$VENV_DIR/bin/python" -m pip install --upgrade pip -q
+# Remove interrupted pip leftovers if present
+find "$VENV_DIR" -type d -name '~*' 2>/dev/null | while read -r d; do
+  info "Removing broken package leftover: $(basename "$d")"
+  rm -rf "$d"
+done
 if ! "$VENV_DIR/bin/pip" install -r "$REQ_LITE" -q; then
   fail "pip install failed. Ensure Python is 3.11-3.13 (not 3.14). Current venv: $($VENV_DIR/bin/python --version 2>&1)"
   exit 1

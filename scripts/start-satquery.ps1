@@ -547,10 +547,30 @@ try {
         Write-Ok ("venv created: {0}" -f ((& $venvPython --version 2>&1 | Out-String).Trim()))
     }
 
+    # Clean interrupted pip leftovers (e.g. ~yproj) that spam stderr as "errors"
+    $sitePkgs = Join-Path $VenvDir "Lib\site-packages"
+    if (Test-Path $sitePkgs) {
+        Get-ChildItem $sitePkgs -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "~*" } |
+            ForEach-Object {
+                Write-Info ("Removing broken package leftover: {0}" -f $_.Name)
+                Remove-Item -Recurse -Force $_.FullName -ErrorAction SilentlyContinue
+            }
+    }
+
     Write-Info "Installing pinned packages from requirements-lite.txt..."
-    & $venvPython -m pip install --upgrade pip -q
-    & $venvPip install -r $ReqLite
-    if ($LASTEXITCODE -ne 0) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $venvPython -m pip install --upgrade pip -q 2>&1 | Out-Null
+        # -q keeps the console readable; 2>&1 avoids WARNING lines aborting the .bat UI
+        $pipOut = & $venvPip install -r $ReqLite -q 2>&1
+        $pipCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    if ($pipCode -ne 0) {
+        if ($pipOut) { $pipOut | ForEach-Object { Write-Host "   $_" -ForegroundColor DarkGray } }
         throw "pip install failed. Use Python 3.11-3.13 (not 3.14). See backend/requirements-lite.txt"
     }
     Write-Ok "Backend dependencies ready (pinned)"
