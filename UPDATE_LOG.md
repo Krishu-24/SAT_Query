@@ -2,7 +2,7 @@
 
 **Base remote:** [https://github.com/Krishu-24/SAT_Query](https://github.com/Krishu-24/SAT_Query)  
 **Base tip this work started from:** `8bf5845` — *Restructure SatQuery into a pushable app with Shiven router integration and one-click launchers*  
-**Current tip (this log):** `eb62b0d` — *Route multi-part analytical questions as a single VQA*  
+**Current tip (this log):** `6ccd39a` — *Document workstream C…* (code behavior tip: `eb62b0d` single-VQA routing)  
 **Purpose of this file:** Describe every intentional change made on top of that base so another contributor can merge their branch against ours without guessing intent.  
 **Not a git log.** Prefer reading this + the file lists below over `git log`.
 
@@ -273,4 +273,4 @@ Safer to take **their** feature commits into a branch, then re-apply our `node/`
 
 ---
 
-*End of update log through `eb62b0d`. Append the next workstream below if you continue this handoff.*
+*End of update log through docs refresh after `eb62b0d` / `6ccd39a`. Append the next workstream below if you continue this handoff.*

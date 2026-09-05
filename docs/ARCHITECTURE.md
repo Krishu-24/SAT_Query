@@ -1,6 +1,6 @@
 # Architecture
 
-How SatQuery is wired today: what runs when you click the launcher, how a query flows through the system, and where each piece of code lives.
+How SatQuery is wired today: launcher roles, analyze path (validator → router → hybrid / remote VLM), and where code lives.
 
 ---
 
@@ -11,85 +11,109 @@ flowchart LR
   U[User] --> FE[frontend<br/>Next.js :3000]
   FE -->|multipart POST /api/analyze| BE[backend<br/>FastAPI :8000]
   FE -->|POST /api/process-raster| BE
-  BE --> AD[Shiven adapter]
+  BE --> VAL[Validator]
+  VAL -->|ok| AD[Shiven adapter]
   AD --> RT[router/<br/>QueryPlanner]
   RT -->|LLM plan| OL[Ollama<br/>qwen3:4b]
   RT -->|on failure| RB[Rule classifier]
-  AD --> PIPE[Pipeline plan<br/>model names + steps]
-  PIPE --> UN[Unavailable executor<br/>Model not available]
-  UN --> TRACE[Execution trace]
+  AD -->|coalesce analytical VQA| PIPE[Pipeline plan]
+  PIPE --> HY[HybridPipelineExecutor]
+  HY -->|paired| NODE[Model Host :8100]
+  NODE --> VL[Ollama qwen2.5vl:7b]
+  HY -->|no host| UN[Unavailable / local]
+  HY --> TRACE[Execution trace]
   TRACE --> FE
 ```
 
-**Design rule:** Frontend and router cores stay intact. The backend is the integration boundary. A thin adapter calls the router planner and maps its plan into the API contract the UI already expects.
+**Design rules:** Frontend UX stays intact. Backend is the integration boundary. Multi-device is a **node + hybrid executor** layer — not a second app. Router prompts/classifier may be tightened so one analytical question does not fan out into captioning + grounding.
 
 ---
 
-## 2. What the one-click launcher does
+## 2. Device roles (same repo)
 
 ```mermaid
 flowchart TD
-  A[START_SATQUERY] --> B{Python 3.11+?}
-  B -->|no| B1[winget / brew / prompt]
-  B -->|yes| C{Node.js + npm?}
+  A[START_SATQUERY] --> R{Role every launch}
+  R -->|Controller| C[FE :3000 + API :8000<br/>planner Ollama]
+  R -->|Model Host| H[host_app :8100 foreground<br/>+ VLM Ollama]
+  R -->|Full System| F[Controller stack<br/>+ optional host]
+  C -->|pair_host.py| H
+```
+
+| Role | Processes | Does not |
+|------|-----------|----------|
+| Controller | Next + `app.main:app` + planner model | Pull large VL by default |
+| Model Host | `app.node.host_app:app` on **8100** (live console) | Frontend |
+| Full System | Controller path (+ host pieces as configured) | Assume every GPU fits every model |
+
+State file (gitignored): `.satquery/device.json` — pairing tokens, hosted model tags. Cleared on each clean shutdown; **re-pair after restart**.
+
+---
+
+## 3. What the one-click launcher does
+
+```mermaid
+flowchart TD
+  A[START_SATQUERY] --> B{Python 3.11–3.13?}
+  B -->|no| B1[Install / recreate venv]
+  B -->|yes| C{Role}
   B1 --> C
-  C -->|no| C1[Install Node LTS]
-  C -->|yes| D{Ollama?}
-  C1 --> D
-  D -->|optional| E[Pull qwen3:4b-instruct]
-  D --> F[Create backend .venv]
-  E --> F
-  F --> G[pip install requirements-lite.txt]
-  G --> H[Write frontend/.env.local]
-  H --> I[npm install]
-  I --> J[Start uvicorn :8000]
-  J --> K[Start next dev :3000]
-  K --> L[Open http://localhost:3000]
-  L --> M[Keep window open until Ctrl+C]
+  C -->|Controller / Full| D[Node + npm + planner pull]
+  C -->|Model Host| E[Node API deps + qwen2.5vl pull]
+  D --> F[uvicorn :8000 + next :3000]
+  E --> G[uvicorn host :8100 foreground]
+  F --> H[Optional pair prompt]
+  H --> I[Open localhost:3000]
 ```
 
 | Step | Windows | macOS |
 |------|---------|-------|
 | Entry | `START_SATQUERY.bat` | `START_SATQUERY.command` |
 | Script | `scripts/start-satquery.ps1` | `scripts/start-satquery.sh` |
-| Package manager assist | `winget` when available | `brew` when available |
-| Logs | `scripts/logs/` | `scripts/logs/` |
-
-Environment the launcher sets for the backend process:
+| Logs | `scripts/logs/` (+ live host console) | same |
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `USE_SHIVEN_ROUTER` | `true` | Use `router/` planner via adapter |
-| `SKIP_MODEL_INFERENCE` | `true` | Do not load specialist weights; emit honest “not loaded” steps |
-| `SHIVEN_ROUTER_ROOT` | `<repo>/router` | Path to planner package |
-| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Local LLM API |
-| `OLLAMA_PLANNER_MODEL` | `qwen3:4b-instruct` | Small text planner model |
+| `SKIP_MODEL_INFERENCE` | `true` | Do not load specialist weights locally |
+| `SHIVEN_ROUTER_ROOT` | `<repo>/router` | Planner package path |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Local Ollama |
+| `OLLAMA_PLANNER_MODEL` | `qwen3:4b-instruct` | Text planner |
 | `NEXT_PUBLIC_API_URL` | `http://127.0.0.1:8000` | Frontend → backend |
 
 ---
 
-## 3. Request path (analyze)
+## 4. Request path (analyze)
 
 ```mermaid
 sequenceDiagram
   participant UI as Frontend
   participant API as FastAPI
+  participant VAL as Validator
   participant AD as ShivenAdapter
   participant QP as QueryPlanner
-  participant EX as UnavailableExecutor
+  participant HY as HybridExecutor
+  participant MH as ModelHost
   participant TB as TraceBuilder
 
-  UI->>API: POST /api/analyze (images, query, modalities, ?debug)
-  API->>API: Save uploads + validate
+  UI->>API: POST /api/analyze
+  API->>VAL: validate images + query
+  VAL-->>API: VALID / WARNING or stop (422)
   API->>AD: route(query, images)
-  AD->>QP: LLMPlanner / rule fallback
+  AD->>QP: LLM / rule plan
   QP-->>AD: QueryPlan tasks[]
-  AD-->>API: RoutingDecision + intent_decomposition + fallback_used
-  API->>EX: execute(pipeline) without loading weights
-  EX-->>API: steps with error "Model not loaded"
-  API->>TB: build execution_trace
-  API-->>UI: answer "Model not available" + trace
-  UI->>UI: ResultPanel + DebugPanel
+  AD->>AD: coalesce analytical VQA; drop spurious GROUNDING/CAPTION
+  AD-->>API: RoutingDecision + intent_decomposition
+  API->>HY: execute(pipeline)
+  alt paired Model Host
+    HY->>MH: POST /node/inference (base64 images)
+    MH->>MH: GeoTIFF→PNG if needed
+    MH-->>HY: answer REMOTE
+  else no host / specialist stub
+    HY-->>API: model not loaded / unavailable
+  end
+  API->>TB: execution_trace
+  API-->>UI: answer + trace (+ NodeStatus poll)
 ```
 
 ### Adapter mapping (router task → backend models)
@@ -103,82 +127,80 @@ sequenceDiagram
 | `CHANGE_VQA` | `change_detection`, `change_vqa` | change map → answer |
 | `OPTICAL_SAR` | `optical_sar_fusion`, `rs_vlm` | fuse → analyze |
 
-Multi-task plans (e.g. “locate … then describe …”) become a **flat ordered pipeline**. Debug Mode shows the original decomposition under **Intent decomposition**.
+**Routing note:** Multi-part analytical questions (“what features… where relative to center… what evidence…”) are kept as **one VQA**. Explicit dual actions (“Find the river and describe the image”) still split GROUNDING + CAPTIONING.
+
+Remote VQA/caption steps use logical model id `qwen-vl` → host Ollama tag `qwen2.5vl:7b`.
 
 ---
 
-## 4. Module map
+## 5. Module map
 
 ```text
 frontend/src/
-  app/page.tsx              orchestrates sessions, map, turns
+  app/page.tsx              sessions, map, turns
   hooks/useAnalysis.ts      POST /api/analyze
-  hooks/useRasterOverlay.ts POST /api/process-raster
-  components/DebugPanel.tsx router + models + waterfall
-  types/api.ts              mirrors backend response schema
+  components/NodeStatus.tsx Model Host / VLM strip
+  components/DebugPanel.tsx router + REMOTE block
+  types/api.ts              response + telemetry
 
 backend/app/
   api/routes.py             analyze / health
-  agent/shiven_adapter.py   thin import + plan mapping (does not edit router core)
-  agent/unavailable_executor.py  honest no-weights path
-  agent/router.py           RoutingDecision schema (+ optional planner fields)
+  api/node_controller.py    /api/nodes/* pairing + status
+  agent/validator.py        pre-router hard validation
+  agent/query_requirements.py / geo_checks.py
+  agent/shiven_adapter.py   plan map + coalesce
+  agent/hybrid_executor.py  remote rs_vlm then fallback
+  agent/unavailable_executor.py
+  agent/router.py           RuleBasedRouter (+ RoutingDecision)
+  node/                     Model Host package (host_app, client, registry, ollama_runtime, …)
   output/trace.py           Debug execution_trace
-  utils/config.py           ports, Ollama, SHIVEN_ROUTER_ROOT
+  utils/config.py           ports, Ollama, role env
 
 router/app/
-  planner/                  LLM + rule fallback QueryPlanner
-  router/                   capability router + classifier
-  agents/ / pipelines/      specialist stubs (unused when SKIP_MODEL_INFERENCE)
+  planner/                  LLM prompt + QueryPlanner
+  router/classifier.py      rule fallback / compound VQA
+  agents/ / pipelines/      specialist stubs
 ```
 
 ```mermaid
 flowchart TB
-  subgraph keep_untouched [Keep intact]
-    FECORE[Frontend UI/UX]
-    RTCORE[router classifier / LLM prompts / agents]
+  subgraph ui [Frontend]
+    FECORE[UI / map / Debug]
+    NS[NodeStatus]
   end
-  subgraph glue [Integration glue]
-    AD2[shiven_adapter.py]
-    UN2[unavailable_executor.py]
-    RT2[routes.py wiring]
-    TRACE2[trace metadata fields]
+  subgraph be [Backend glue]
+    VAL2[validator]
+    AD2[shiven_adapter]
+    HY2[hybrid_executor]
+    NODE2[node/*]
   end
-  FECORE --> RT2
-  RT2 --> AD2
+  subgraph keep [Planner package]
+    RTCORE[router/ planner + classifier]
+  end
+  FECORE --> VAL2
+  VAL2 --> AD2
   AD2 --> RTCORE
-  RT2 --> UN2
-  UN2 --> TRACE2
-  TRACE2 --> FECORE
+  AD2 --> HY2
+  HY2 --> NODE2
+  NS --> NODE2
 ```
 
 ---
 
-## 5. Debug Mode (what you should see)
-
-```mermaid
-flowchart LR
-  T[Sidebar Debug toggle] --> Q[?debug=true on analyze]
-  Q --> M[router_metadata]
-  M --> F[fallback_used badge]
-  M --> I[intent_decomposition]
-  M --> P[planner_type / planning_time]
-  Q --> S[selected_models<br/>model not loaded]
-  Q --> W[pipeline_steps<br/>error: Model not loaded]
-  Q --> R[raw request/response JSON]
-```
+## 6. Debug Mode & connection strip
 
 | UI signal | Meaning |
 |-----------|---------|
-| Answer `Model not available` | Specialist weights not run (`SKIP_MODEL_INFERENCE=true`) |
-| Badge `fallback rule` | Ollama/LLM plan failed; rule-based plan used |
-| `model not loaded` | Model name was selected but weights were not loaded |
-| Intent cards | How the query was split and which models each subtask would call |
-
-When real models are wired later: set `SKIP_MODEL_INFERENCE=false` and replace stub loaders — the same Debug contract can carry real payloads/telemetry.
+| Answer from remote VLM | Paired host ran `/node/inference` (`Execution: REMOTE`) |
+| Answer `Model not available` / pairing hint | No host or specialists skipped |
+| Badge `fallback rule` | Ollama planner failed; rule-based plan used |
+| `model not loaded` | Specialist selected but weights not loaded |
+| Intent cards | Decomposition after adapter coalesce |
+| Sidebar Model Host / VLM | Live poll of `/api/nodes/status` |
 
 ---
 
-## 6. Raster / map path (unchanged UX)
+## 7. Raster / map path (unchanged UX)
 
 ```mermaid
 flowchart TD
@@ -190,16 +212,17 @@ flowchart TD
   SYN --> CAM
 ```
 
-Synthetic location is **kept on purpose** for demo polish (camera always has somewhere to go). It is not used as fake NLP/model output.
+Synthetic location is for demo camera polish only — not fake model output.
 
 ---
 
-## 7. Ports and processes
+## 8. Ports and processes
 
 | Service | Port | Process |
 |---------|------|---------|
-| Frontend | 3000 | `next dev` |
+| Frontend | 3000 | `next dev` (Controller / Full System) |
 | Backend | 8000 | `uvicorn app.main:app` |
-| Ollama | 11434 | `ollama serve` (optional) |
+| Model Host | 8100 | `uvicorn app.node.host_app:app` |
+| Ollama | 11434 | `ollama serve` |
 
-Only **one** FastAPI should bind `:8000`. Do not also start `router` as a separate uvicorn app for the integrated demo — the adapter imports the planner in-process.
+Only **one** app should bind each port. Do not also start `router/` as a separate uvicorn for the integrated demo — the adapter imports the planner in-process.

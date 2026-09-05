@@ -1,6 +1,6 @@
 # Setup & run instructions
 
-One-click launch on **Windows** and **macOS**, plus manual fallback and troubleshooting.
+One-click launch on **Windows** and **macOS**, role-aware multi-device setup, manual fallback, and troubleshooting.
 
 ---
 
@@ -8,24 +8,28 @@ One-click launch on **Windows** and **macOS**, plus manual fallback and troubles
 
 | Tool | Version | Required? | Notes |
 |------|---------|-----------|-------|
-| Python | **3.11–3.13** (3.12 recommended) | Yes | Backend API. **Not 3.14** — pydantic-core has no wheels / PyO3 build fails. Launcher creates `backend/.venv` with pinned `requirements-lite.txt`. |
-| Node.js | 18+ LTS | Yes | Frontend |
-| npm | comes with Node | Yes | |
-| Ollama | latest | Optional | Powers the small Qwen3 planner; without it, rule-based fallback still works |
-| Disk | ~2–5 GB free | Yes | More if pulling the Ollama model |
-| GPU | — | No | Not needed for the current demo path |
+| Python | **3.11–3.13** (3.12 recommended) | Yes | Backend / Model Host API. **Not 3.14** — pydantic-core has no wheels. Launcher creates `backend/.venv` with pinned `requirements-lite.txt`. |
+| Node.js | 18+ LTS | Controller / Full System | Frontend |
+| npm | comes with Node | Controller / Full System | |
+| Ollama | latest | Strongly recommended | Planner on Controller (`qwen3:4b-instruct`); VLM on Model Host (`qwen2.5vl:7b`) |
+| Disk | ~2–5 GB+ | Yes | More when pulling the host VLM (~6 GB) |
+| GPU | — | Optional | Helps Model Host VLM; not required for Controller-only demo |
 
 ---
 
 ## One-click (recommended)
 
+Every launch asks for this machine’s role (**Controller** / **Model Host** / **Full System**). Previous `.satquery/device.json` is cleared at start and on exit — re-pair after each Controller restart.
+
 ### Windows
 
 1. Open the repo folder `SAT_Query`.
 2. Double-click **`START_SATQUERY.bat`**.
-3. Wait for checks / installs (first run is longest: `pip` + `npm` + optional model pull).
-4. Browser should open **http://localhost:3000**.
-5. Leave the console open. Press **Ctrl+C** to stop.
+3. Pick a role when prompted.
+4. Wait for checks / installs (first run is longest: `pip` + `npm` + optional model pull).
+5. **Controller / Full System:** browser opens **http://localhost:3000**.  
+   **Model Host:** this window stays in the foreground and prints pairing / INCOMING query logs — leave it open.
+6. Press **Ctrl+C** to stop (frees ports, stops Ollama models, clears role).
 
 If PowerShell blocks scripts, the `.bat` already uses `-ExecutionPolicy Bypass` for this file only.
 
@@ -39,9 +43,8 @@ If PowerShell blocks scripts, the `.bat` already uses `-ExecutionPolicy Bypass` 
      chmod +x START_SATQUERY.command scripts/start-satquery.sh
      xattr -d com.apple.quarantine START_SATQUERY.command 2>/dev/null || true
      ```
-3. Double-click **`START_SATQUERY.command`**.
-4. Wait for setup; browser opens **http://localhost:3000**.
-5. Leave the Terminal window open. **Ctrl+C** stops services.
+3. Double-click **`START_SATQUERY.command`** and pick a role.
+4. Same role behavior as Windows above.
 
 Optional Homebrew helpers (used automatically when present):
 
@@ -61,34 +64,62 @@ rm -rf backend/.venv
 
 ---
 
+## Multi-device (Controller + Model Host)
+
+Typical split: Mac = Controller, Windows GPU PC = Model Host (any OS can be either role).
+
+1. Start **Model Host** first. Note **LAN IP**, port **8100**, and **pairing code**.
+2. Start **Controller**. At the pairing prompt (or later):
+
+   ```bash
+   python scripts/pair_host.py <host-ip> 8100 <pairing-code>
+   ```
+
+3. Sidebar should show **Model Host: connected** and **VLM: ready**.
+4. Ask a VQA/caption question with an image. Host terminal should print `INCOMING QUERY` → Ollama → answer. Controller console mirrors OUTGOING/INCOMING from `backend.log`.
+
+GeoTIFF uploads are converted to PNG on the Model Host before Ollama (raw TIFF is often rejected).
+
+Full merge notes: **[UPDATE_LOG.md](../UPDATE_LOG.md)**. Spec: **[SATQUERY_MULTIDEVICE_SPEC.md](../SATQUERY_MULTIDEVICE_SPEC.md)** (implementation may differ slightly — role is asked every launch).
+
+---
+
 ## What success looks like
 
-Console should print something like:
+### Controller / Full System
 
 ```text
 OPEN THE WEBSITE:
 http://localhost:3000
 
 Backend API:   http://127.0.0.1:8000
-Swagger docs:  http://127.0.0.1:8000/docs
 ```
 
 In the UI:
 
 1. Turn on **Debug Mode** (sidebar bug icon).
-2. Type e.g. `Locate the water bodies then describe the image.`
-3. Expect answer **`Model not available`**.
-4. In Debug: intent decomposition, selected models with **`model not loaded`**, and a **fallback** badge if Ollama is down.
+2. With a **paired** Model Host: ask a VQA question → expect a real answer and Debug `Execution: REMOTE`.
+3. **Without** a host: expect answer **`Model not available`** / pairing hint, and Debug steps with **`model not loaded`** for specialists.
+4. Multi-part analytical VQA (features + relative location + evidence) should show **one** `rs_vlm` / `answer_question` step — not grounding_dino + sam.
+
+### Model Host
+
+```text
+SatQuery Model Host is running
+  Port:          8100
+  Pairing code:  ......
+  Live pairing / query / answer logs will print below.
+```
 
 ---
 
 ## Manual run (developers)
 
-### Backend
+### Backend (Controller path)
 
 ```bash
 cd backend
-python3 -m venv .venv          # Windows: python -m venv .venv
+python3.12 -m venv .venv       # Windows: py -3.12 -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements-lite.txt
 
@@ -97,6 +128,14 @@ export SKIP_MODEL_INFERENCE=true
 export SHIVEN_ROUTER_ROOT="$(pwd)/../router"   # Windows: set SHIVEN_ROUTER_ROOT=...\router
 
 uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+### Model Host only
+
+```bash
+cd backend
+# same venv + deps
+uvicorn app.node.host_app:app --host 0.0.0.0 --port 8100
 ```
 
 ### Frontend
@@ -108,11 +147,12 @@ npm install
 npm run dev
 ```
 
-### Optional Ollama planner
+### Ollama
 
 ```bash
 ollama serve
-ollama pull qwen3:4b-instruct
+ollama pull qwen3:4b-instruct   # Controller planner
+ollama pull qwen2.5vl:7b        # Model Host VLM
 ```
 
 ---
@@ -123,13 +163,13 @@ ollama pull qwen3:4b-instruct
 |------|-------|---------|---------|
 | `NEXT_PUBLIC_API_URL` | `frontend/.env.local` | `http://127.0.0.1:8000` | UI → API |
 | `USE_SHIVEN_ROUTER` | backend env | `true` | Use `router/` planner |
-| `SKIP_MODEL_INFERENCE` | backend env | `true` | Skip loading specialist weights |
+| `SKIP_MODEL_INFERENCE` | backend env | `true` | Skip loading specialist weights locally |
 | `SHIVEN_ROUTER_ROOT` | backend env | `<repo>/router` | Planner package path |
-| `OLLAMA_BASE_URL` | backend env | `http://127.0.0.1:11434` | Planner LLM |
-| `OLLAMA_PLANNER_MODEL` | backend env | `qwen3:4b-instruct` | Model tag |
+| `OLLAMA_BASE_URL` | backend env | `http://127.0.0.1:11434` | Local Ollama |
+| `OLLAMA_PLANNER_MODEL` | backend env | `qwen3:4b-instruct` | Planner tag |
+| `SATQUERY_ROLE` | optional | from `.satquery/` | `controller` / `model_host` / `full_system` |
+| `SATQUERY_NODE_PORT` | optional | `8100` | Model Host bind port |
 | `SATQUERY_DEBUG` | backend env | off | Always attach payload snapshots |
-
-To try real stub model execution later: `SKIP_MODEL_INFERENCE=false` (still not full satellite VLMs unless weights are installed).
 
 ---
 
@@ -137,40 +177,39 @@ To try real stub model execution later: `SKIP_MODEL_INFERENCE=false` (still not 
 
 | Issue | What you’ll see | Fix |
 |-------|-----------------|-----|
-| Port 3000 or 8000 busy | Launcher / bind error | Close other apps using those ports; re-run (launcher tries to free them on Windows) |
-| Node not installed | Setup fails at npm | Install Node LTS from https://nodejs.org/ then re-run |
-| Python too old / **3.14** | `pydantic-core` build fails / PyO3 max 3.13 | `brew install python@3.12` (Mac) or install 3.12 (Windows); `rm -rf backend/.venv`; re-run launcher |
-| Ollama missing | Amber **fallback** in Debug | Optional — install Ollama or ignore; routing still works |
-| macOS “cannot be opened” | Gatekeeper | `chmod +x` + right-click Open / remove quarantine (above) |
-| Blank UI / network error | “Couldn’t reach the backend” | Confirm `:8000` health: http://127.0.0.1:8000/api/health |
-| Two FastAPI apps | Confusing routes | Do **not** also `uvicorn` inside `router/` for the demo |
-| Spaces in path | Rare tool issues | Prefer cloning to a path without spaces when possible |
-| First `npm install` slow | Long wait | Normal; watch `scripts/logs/frontend*.log` |
-| Windows execution policy | Script blocked | Use the `.bat` (Bypass is already set) |
-| Antivirus locks `node_modules` | Install/delete fails | Pause real-time scan briefly or re-run as admin |
+| Port 3000 / 8000 / **8100** busy | Launcher / bind error | Close other apps; re-run (launcher frees ports) |
+| Node not installed | Setup fails at npm | Install Node LTS; re-run |
+| Python **3.14** | `pydantic-core` / PyO3 fail | Install 3.12; `rm -rf backend/.venv`; re-run |
+| UI connected but “model not loaded” | Analyze never hits host | Re-pair after Controller restart; check sidebar refresh |
+| Host terminal idle | Old Hidden uvicorn | Pull latest; Model Host must run in **foreground** |
+| Ollama `Failed to load image` on TIFF | Remote error | Pull latest (host converts GeoTIFF→PNG) |
+| Spurious grounding/SAM on a VQA ask | Debug shows DINO+SAM | Pull latest routing fix (Workstream C) |
+| Ollama missing on Controller | Amber **fallback** in Debug | Optional for planning; install or ignore |
+| Blank UI / network error | “Couldn’t reach the backend” | http://127.0.0.1:8000/api/health |
+| Two FastAPI apps | Confusing routes | Do **not** also `uvicorn` inside `router/` |
+| macOS “cannot be opened” | Gatekeeper | `chmod +x` + right-click Open (above) |
+| Windows execution policy | Script blocked | Use the `.bat` |
+| Antivirus locks `node_modules` | Install fails | Pause scan briefly / re-run |
 
-Logs live in **`scripts/logs/`** (`backend.log`, `frontend.log`, `last-run.json`).
+Logs: **`scripts/logs/`** (`backend.log`, `frontend.log`, `last-run.json`). Model Host live traffic is in the **host console** (not only log files).
 
 ---
 
-## Project tree (after cleanup)
+## Project tree
 
 ```text
 SAT_Query/
-├── START_SATQUERY.bat          Windows one-click
-├── START_SATQUERY.command      macOS one-click
+├── START_SATQUERY.bat / .command
 ├── README.md
-├── docs/
-│   ├── ARCHITECTURE.md         how it works (flowcharts)
-│   └── SETUP.md                this file
-├── scripts/
-│   ├── start-satquery.ps1
-│   ├── start-satquery.sh
-│   └── logs/                   runtime logs (gitignored)
-├── frontend/                   Next.js UI
-├── backend/                    FastAPI + adapter
-├── router/                     planner / agent package
-├── contrib/                    optional model WIP
+├── UPDATE_LOG.md / UPDATES.md
+├── docs/SETUP.md / ARCHITECTURE.md
+├── scripts/start-satquery.ps1 / .sh
+├── scripts/configure_role.py / pair_host.py
+├── scripts/logs/
+├── frontend/
+├── backend/          # includes app/node/ (Model Host API)
+├── router/
+├── contrib/
 ├── data/
 └── training/
 ```
@@ -179,6 +218,6 @@ SAT_Query/
 
 ## Stopping
 
-- One-click window: **Ctrl+C**
-- Manual: stop the two terminals running `uvicorn` and `npm run dev`
+- One-click window: **Ctrl+C** (clears role, frees ports, `ollama stop` on models the launcher managed)
+- Manual: stop `uvicorn` / `npm run dev` terminals
 - Ollama can keep running in the background if you use it for other projects

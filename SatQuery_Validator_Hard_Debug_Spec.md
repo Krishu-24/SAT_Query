@@ -1,5 +1,7 @@
 # SatQuery AI — Validator Hard-Debug Specification
 
+> **Implementation status:** Hardened validator is in `backend/app/agent/validator.py` (+ `query_requirements.py`, `geo_checks.py`) with tests in `tests/test_validator_hard_debug.py`. Statuses and 422 `detail.errors[]` match Workstream A in `UPDATE_LOG.md`. This file remains the case matrix / intent; code may use slightly different messaging.
+
 ## Purpose
 
 This document defines the validation/red-team cases for the existing SatQuery AI query router.

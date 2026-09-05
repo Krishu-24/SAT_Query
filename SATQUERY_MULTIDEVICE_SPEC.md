@@ -2,6 +2,8 @@
 
 Repository: `https://github.com/Krishu-24/SAT_Query`
 
+> **Implementation status (as of `UPDATE_LOG.md` Workstream B/C):** The multi-device layer is shipped in-tree (`backend/app/node/`, hybrid executor, role-aware launchers, sidebar `NodeStatus`). Notable deltas vs this original spec: role is asked **every** launch and cleared on exit (not persisted across sessions); host VLM runtime tag is **`qwen2.5vl:7b`** (not the non-registry GGUF string); Model Host uvicorn runs in the **foreground**; GeoTIFF is converted to PNG before Ollama; pairing registry reloads from disk after CLI pair. Treat this file as the design intent; treat `UPDATE_LOG.md` + `docs/SETUP.md` as “what runs today.”
+
 This is **ONE project** and must remain **ONE repository and ONE codebase**. The goal is to extend the existing SatQuery application so the exact same repository can be cloned onto ANY laptop/PC, and the application determines at startup which role that particular machine should perform.
 
 Do not create separate projects for Mac, Windows, model hosts, or controllers.
