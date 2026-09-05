@@ -8,6 +8,7 @@ are named `app`), then maps QueryPlan → this backend's RoutingDecision.
 
 from __future__ import annotations
 
+import re
 import sys
 import threading
 import time
@@ -127,9 +128,6 @@ def _load_shiven_classes() -> tuple[Any, Any, Any]:
         root_str = str(root)
         backend_cwd = str(settings.BASE_DIR.resolve())
         old_path = sys.path[:]
-        # Prefer Shiven's app/ package; hide this backend's directory so the
-        # local `app` package cannot win the import. Keep the rest of sys.path
-        # (stdlib/site-packages).
         filtered = [
             p for p in old_path
             if p not in ("", ".")
@@ -150,7 +148,6 @@ def _load_shiven_classes() -> tuple[Any, Any, Any]:
             _shiven_cache["QueryPlanner"] = QueryPlanner
             _shiven_cache["LLMPlanner"] = LLMPlanner
             _shiven_cache["OllamaClient"] = OllamaClient
-            # Keep modules alive so class methods keep working.
             _shiven_cache["modules"] = shiven_modules
         finally:
             sys.path[:] = old_path
@@ -179,6 +176,88 @@ def _image_refs(image_paths: list[str], modalities: list[str]) -> list[dict]:
     return refs
 
 
+_OVERLAY_MARKERS = (
+    "highlight",
+    "segment",
+    "outline",
+    "bounding box",
+    "mark the",
+    "circle",
+    "point out",
+    "show me",
+)
+
+
+def _task_name(intent: Any) -> str:
+    t = intent.task
+    return (t.value if hasattr(t, "value") else str(t)).upper()
+
+
+def _wants_spatial_overlay(query: str) -> bool:
+    q = query.lower()
+    if any(m in q for m in _OVERLAY_MARKERS):
+        return True
+    if re.search(r"\b(locate|find)\b", q):
+        return True
+    if "where is the" in q or "where are the" in q:
+        return True
+    return False
+
+
+def _is_compound_analytical_vqa(query: str) -> bool:
+    """Multi-part question seeking one textual answer (not boxes/masks)."""
+    q = query.lower()
+    if any(m in q for m in _OVERLAY_MARKERS):
+        return False
+    if any(
+        p in q
+        for p in (
+            "relative to",
+            "what evidence",
+            "supports your",
+            "most prominent",
+            "visual features",
+        )
+    ):
+        return True
+    return len(re.findall(r"\b(what|where|which|how|why)\b", q)) >= 2
+
+
+def _filter_plan_tasks(plan_tasks: list[Any], query: str) -> list[tuple[str, Any]]:
+    """
+    Normalize over-eager plans into executable intents.
+
+    Returns list of (task_name, intent). For compound analytical VQA, forces
+    a single VQA entry carrying the full user query.
+    """
+    if not plan_tasks:
+        return []
+
+    names = [_task_name(i) for i in plan_tasks]
+    vlmish = {"VQA", "CAPTIONING", "UNKNOWN", "GROUNDING"}
+
+    if _is_compound_analytical_vqa(query) and all(n in vlmish for n in names):
+        logger.info(f"Coalescing Shiven plan {names} → single VQA (analytical)")
+        return [("VQA", plan_tasks[0])]
+
+    kept: list[tuple[str, Any]] = []
+    for intent in plan_tasks:
+        name = _task_name(intent)
+        if name == "GROUNDING" and not _wants_spatial_overlay(query):
+            logger.info("Dropping GROUNDING without spatial-overlay intent")
+            continue
+        if name == "CAPTIONING" and (
+            "VQA" in names or _is_compound_analytical_vqa(query)
+        ):
+            logger.info("Dropping redundant CAPTIONING alongside VQA/analytical ask")
+            continue
+        kept.append((name, intent))
+
+    if not kept:
+        return [("VQA", plan_tasks[0])]
+    return kept
+
+
 def _plan_task_to_pipeline(
     task_name: str,
     task_id: str,
@@ -205,6 +284,7 @@ class ShivenRouterAdapter:
 
     Fallback detection mirrors QueryPlanner.create_plan's try/except, but records
     whether the LLM path succeeded so the frontend Debug panel can show it.
+    Post-filters over-decomposed plans (VQA+CAPTION+GROUNDING for one question).
     """
 
     def route(
@@ -259,11 +339,16 @@ class ShivenRouterAdapter:
         primary_task = TaskType.VQA
         step_offset = 0
 
-        for intent in plan.tasks:
-            task_name = (
-                intent.task.value if hasattr(intent.task, "value") else str(intent.task)
-            )
+        filtered = _filter_plan_tasks(list(plan.tasks), query)
+        for task_name, intent in filtered:
             task_id = getattr(intent, "task_id", "task_1") or "task_1"
+            if task_name == "VQA" and (
+                _is_compound_analytical_vqa(query) or len(filtered) == 1
+            ):
+                query_fragment = query
+            else:
+                query_fragment = intent.target if intent.target else query
+
             mapped_type, steps, step_models = _plan_task_to_pipeline(task_name, task_id)
             if not pipeline:
                 primary_task = mapped_type
@@ -276,11 +361,10 @@ class ShivenRouterAdapter:
                 if m not in models:
                     models.append(m)
 
-            query_fragment = intent.target if intent.target else query
             decomposition.append({
                 "task_id": task_id,
                 "task": task_name,
-                "target": intent.target,
+                "target": intent.target if task_name != "VQA" else None,
                 "depends_on": list(intent.depends_on or []),
                 "confidence": getattr(intent, "confidence", None),
                 "requires_spatial_evidence": getattr(

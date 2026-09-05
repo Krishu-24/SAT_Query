@@ -11,6 +11,35 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from app.agent.router import RuleBasedRouter, TaskType
 
 
+def test_compound_analytical_vqa_not_grounding():
+    """Multi-part feature/location/evidence questions are one VQA, not DINO+SAM."""
+    router = RuleBasedRouter()
+    query = (
+        "Examine this satellite image carefully. What are the three most "
+        "prominent visual features, where are they located relative to the "
+        "image center, and what evidence in the image supports your identification?"
+    )
+    result = router.route(query, {"num_images": 1, "modalities": ["optical"]})
+    assert result.task_type == TaskType.VQA
+    assert result.models == ["rs_vlm"]
+    assert len(result.pipeline) == 1
+    assert result.pipeline[0]["action"] == "answer_question"
+    assert result.rule_id == "compound_analytical_vqa"
+    assert "grounding_dino" not in result.models
+    assert "sam" not in result.models
+
+
+def test_located_does_not_trigger_grounding():
+    """Substring 'locate' inside 'located' must not fire grounding."""
+    router = RuleBasedRouter()
+    result = router.route(
+        "Where are the clouds located relative to the coast?",
+        {"num_images": 1, "modalities": ["optical"]},
+    )
+    assert result.task_type == TaskType.VQA
+    assert "grounding_dino" not in result.models
+
+
 def test_single_image_vqa():
     """General question on single image → VQA."""
     router = RuleBasedRouter()

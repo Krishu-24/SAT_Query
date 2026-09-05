@@ -10,7 +10,7 @@ Uses TWO signals to classify the task:
 Task Classification Matrix:
   | Images | Modalities    | Keywords                              | → Task            |
   |--------|---------------|---------------------------------------|--------------------|
-  | 1      | Any           | "highlight", "show", "locate", ...    | GROUNDING          |
+  | 1      | Any           | "highlight", "show me", "locate", ... | GROUNDING          |
   | 1      | Any           | "describe", "caption", "summarize"    | CAPTION            |
   | 1      | Any           | Any other question                    | VQA                |
   | 2      | Same          | Specific question ("has X increased?")| CHANGE_VQA         |
@@ -18,6 +18,9 @@ Task Classification Matrix:
   | 2      | optical+sar   | Any                                   | OPTICAL_SAR        |
 """
 
+from __future__ import annotations
+
+import re
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional
@@ -25,7 +28,7 @@ from typing import Optional
 
 # Bumped whenever the routing rules themselves change, so a stored trace can
 # be interpreted against the ruleset that actually produced it.
-ROUTER_VERSION = "rule_based_keyword/1"
+ROUTER_VERSION = "rule_based_keyword/2"
 
 
 class TaskType(Enum):
@@ -84,18 +87,48 @@ class RuleBasedRouter:
     Zero VRAM — runs on CPU. Perfect for POC demo.
     """
 
-    # --- Keyword dictionaries ---
-
+    # Overlay / localization imperatives — must be whole words / phrases.
+    # Avoid bare "locate" matching inside "located".
     GROUNDING_KW = [
-        "highlight", "show me", "locate", "find", "where is",
-        "mark", "segment", "outline", "box", "identify region",
-        "point out", "detect", "show the", "circle", "indicate",
+        "highlight",
+        "show me",
+        "locate",
+        "find",
+        "where is the",
+        "where are the",
+        "mark",
+        "segment",
+        "outline",
+        "bounding box",
+        "point out",
+        "detect",
+        "circle",
+        "indicate",
+    ]
+
+    # Strong overlay verbs — if present, never demote grounding to VQA.
+    GROUNDING_OVERLAY_KW = [
+        "highlight",
+        "segment",
+        "outline",
+        "bounding box",
+        "mark the",
+        "circle",
+        "point out",
+        "show me",
     ]
 
     CAPTION_KW = [
-        "describe", "caption", "summarize", "overview",
-        "tell me about", "what does this show", "explain this",
-        "what is in this", "give me a description", "summary",
+        "describe",
+        "caption",
+        "summarize",
+        "overview",
+        "tell me about",
+        "what does this show",
+        "explain this",
+        "what is in this",
+        "give me a description",
+        "summary",
     ]
 
     CHANGE_KW = [
@@ -182,7 +215,23 @@ class RuleBasedRouter:
                 matched_keywords=self._matched_kw(q, self.CHANGE_KW),
             )
 
-        # ── Single image: Grounding ──
+        # ── Single image: multi-part analytical questions → one VQA ──
+        # e.g. "What are the features, where are they relative to center, and what evidence..."
+        if self._is_compound_analytical_vqa(q):
+            return RoutingDecision(
+                task_type=TaskType.VQA,
+                models=["rs_vlm"],
+                pipeline=[
+                    {"step": 1, "model": "rs_vlm", "action": "answer_question"},
+                ],
+                reasoning=(
+                    "Multi-part analytical question seeking a textual answer → "
+                    "single VQA via VLM (not grounding/caption split)"
+                ),
+                rule_id="compound_analytical_vqa",
+            )
+
+        # ── Single image: Grounding (overlay / localization imperatives) ──
         if self._has_kw(q, self.GROUNDING_KW):
             return RoutingDecision(
                 task_type=TaskType.GROUNDING,
@@ -197,7 +246,8 @@ class RuleBasedRouter:
             )
 
         # ── Single image: Caption ──
-        if self._has_kw(q, self.CAPTION_KW):
+        # Prefer VQA when the query is clearly interrogative ("what/how/which...?")
+        if self._has_kw(q, self.CAPTION_KW) and not self._is_interrogative_vqa(q):
             return RoutingDecision(
                 task_type=TaskType.CAPTION,
                 models=["rs_vlm"],
@@ -220,11 +270,49 @@ class RuleBasedRouter:
             rule_id="default_vqa",
         )
 
+    def _is_compound_analytical_vqa(self, query: str) -> bool:
+        """True when the user wants one textual analysis, not boxes/masks.
+
+        Catches prompts like: features + relative location + supporting evidence.
+        """
+        if self._has_kw(query, self.GROUNDING_OVERLAY_KW):
+            return False
+        if any(
+            p in query
+            for p in (
+                "relative to",
+                "what evidence",
+                "supports your",
+                "most prominent",
+                "visual features",
+            )
+        ):
+            return True
+        interrogatives = len(re.findall(r"\b(what|where|which|how|why)\b", query))
+        return interrogatives >= 2
+
+    def _is_interrogative_vqa(self, query: str) -> bool:
+        if "?" in query:
+            return True
+        return bool(
+            re.search(
+                r"^\s*(what|where|which|how|why|who|is|are|does|do|can|could)\b",
+                query,
+            )
+        )
+
     def _matched_kw(self, query: str, keywords: list[str]) -> list[str]:
-        """The keyword substrings that actually matched — real evidence for
-        why a branch fired, surfaced in the execution trace."""
-        return [kw for kw in keywords if kw in query]
+        """Keyword phrases that matched as whole words/phrases (not substrings)."""
+        matched: list[str] = []
+        for kw in keywords:
+            if " " in kw:
+                if kw in query:
+                    matched.append(kw)
+            else:
+                if re.search(rf"\b{re.escape(kw)}\b", query):
+                    matched.append(kw)
+        return matched
 
     def _has_kw(self, query: str, keywords: list[str]) -> bool:
-        """Check if any keyword appears in the query."""
+        """Check if any keyword appears as a whole word/phrase in the query."""
         return bool(self._matched_kw(query, keywords))
