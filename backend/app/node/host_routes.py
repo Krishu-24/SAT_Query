@@ -112,11 +112,24 @@ def node_pair(body: PairRequest) -> PairResponse:
     cfg = _cfg()
     _assert_host_role(cfg)
     if not body.pairing_code or body.pairing_code.strip() != (cfg.pairing_code or "").strip():
+        msg = "PAIRING FAILED — bad code"
+        print(f"\n*** {msg} ***\n", flush=True)
+        logger.warning(msg)
         return PairResponse(
             ok=False,
             node_id=cfg.node_id,
             error=NodeErrorCode.NODE_PAIRING_FAILED.value,
         )
+    banner = (
+        f"\n{'=' * 64}\n"
+        f"  CONTROLLER PAIRED\n"
+        f"  From: {body.controller_node_id or 'unknown'}\n"
+        f"  Host node: {cfg.node_id}\n"
+        f"  Ready for VQA / captioning requests\n"
+        f"{'=' * 64}\n"
+    )
+    print(banner, flush=True)
+    logger.info(banner)
     return PairResponse(
         ok=True,
         node_id=cfg.node_id,
@@ -136,12 +149,18 @@ def node_inference(
     require_bearer(authorization, cfg.auth_token)
 
     image_names = [im.filename for im in (body.images or [])]
-    logger.info("=" * 64)
-    logger.info(f"[{body.request_id}] INCOMING ← Controller inference request")
-    logger.info(f"[{body.request_id}]   task={body.task}  model={body.model}")
-    logger.info(f"[{body.request_id}]   query={body.query!r}")
-    logger.info(f"[{body.request_id}]   images={image_names}")
-    logger.info("=" * 64)
+    banner = (
+        f"\n{'=' * 64}\n"
+        f"  INCOMING QUERY from Controller\n"
+        f"  request_id: {body.request_id}\n"
+        f"  task:       {body.task}\n"
+        f"  model:      {body.model}\n"
+        f"  query:      {body.query!r}\n"
+        f"  images:     {image_names}\n"
+        f"{'=' * 64}\n"
+    )
+    print(banner, flush=True)
+    logger.info(banner)
 
     if body.task not in ("vqa", "captioning"):
         return InferenceResponse(
@@ -185,11 +204,16 @@ def node_inference(
         )
 
     logger.info(f"[{body.request_id}] Running Ollama tag={tag} ...")
+    print(f"  >>> Running Ollama model {tag} ...\n", flush=True)
     result = runtime.infer(body, node_id=cfg.node_id, ollama_tag=tag)
     if result.status == "success":
         preview = (result.answer or "")[:240]
+        out = f"  <<< SUCCESS answer_preview={preview!r}\n"
+        print(out, flush=True)
         logger.info(f"[{body.request_id}] OUTGOING → Controller SUCCESS answer_preview={preview!r}")
     else:
+        out = f"  <<< FAIL {result.error_code}: {result.error}\n"
+        print(out, flush=True)
         logger.error(
             f"[{body.request_id}] OUTGOING → Controller FAIL "
             f"{result.error_code}: {result.error}"

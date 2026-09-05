@@ -449,20 +449,9 @@ UVICORN="$VENV_DIR/bin/uvicorn"
 [[ -x "$UVICORN" ]] || { fail "uvicorn missing in venv"; exit 1; }
 
 if [[ "$ROLE" == "model_host" ]]; then
-  step "6/9  Starting Model Host node API on :$NODE_PORT"
+  step "6/9  Starting Model Host node API on :$NODE_PORT (foreground — live traffic)"
   free_port "$NODE_PORT"
-  (
-    cd "$BACKEND_DIR"
-    export USE_SHIVEN_ROUTER SKIP_MODEL_INFERENCE SHIVEN_ROUTER_ROOT OLLAMA_BASE_URL OLLAMA_PLANNER_MODEL SATQUERY_ROLE SATQUERY_NODE_PORT
-    exec "$UVICORN" app.node.host_app:app --host 0.0.0.0 --port "$NODE_PORT"
-  ) >"$LOG_DIR/node-host.log" 2>"$LOG_DIR/node-host.err.log" &
-  NODE_PID=$!
-
-  wait_http "http://127.0.0.1:$NODE_PORT/node/health" 90 "Model Host" || {
-    tail -n 40 "$LOG_DIR/node-host.err.log" || true
-    exit 1
-  }
-  ok "Model Host healthy"
+  sleep 1
 
   banner "SatQuery Model Host is running"
   echo
@@ -475,25 +464,28 @@ if [[ "$ROLE" == "model_host" ]]; then
   echo "  On the Controller, pair with:"
   echo "    python scripts/pair_host.py <THIS_LAN_IP> $NODE_PORT $PAIRING_CODE"
   echo
+  echo "  Live pairing / query / answer logs will print below."
   echo "  Leave this window open. Press Ctrl+C to stop."
-  echo "  Reconfigure: ./scripts/start-satquery.sh --change-role"
   echo
-  while true; do
-    sleep 2
-    if ! kill -0 "$NODE_PID" 2>/dev/null; then
-      fail "Model Host exited. See $LOG_DIR/node-host.err.log"
-      exit 1
-    fi
-  done
+
+  cd "$BACKEND_DIR"
+  export USE_SHIVEN_ROUTER SKIP_MODEL_INFERENCE SHIVEN_ROUTER_ROOT OLLAMA_BASE_URL OLLAMA_PLANNER_MODEL SATQUERY_ROLE SATQUERY_NODE_PORT
+  export PYTHONUNBUFFERED=1
+  # Foreground (no exec) so cleanup trap still runs on Ctrl+C
+  "$UVICORN" app.node.host_app:app --host 0.0.0.0 --port "$NODE_PORT" --log-level info
+  exit $?
 fi
 
 step "6/9  Starting FastAPI backend on :$BACKEND_PORT"
 free_port "$BACKEND_PORT"
 [[ "$NEED_FRONTEND" -eq 1 ]] && free_port "$FRONTEND_PORT"
 
+: >"$LOG_DIR/backend.log"
+: >"$LOG_DIR/backend.err.log"
 (
   cd "$BACKEND_DIR"
   export USE_SHIVEN_ROUTER SKIP_MODEL_INFERENCE SHIVEN_ROUTER_ROOT OLLAMA_BASE_URL OLLAMA_PLANNER_MODEL SATQUERY_ROLE SATQUERY_NODE_PORT
+  export PYTHONUNBUFFERED=1
   exec "$UVICORN" app.main:app --host 0.0.0.0 --port "$BACKEND_PORT"
 ) >"$LOG_DIR/backend.log" 2>"$LOG_DIR/backend.err.log" &
 BACKEND_PID=$!
@@ -567,6 +559,7 @@ echo "  Logs:          $LOG_DIR"
 echo "  Change role:   ./scripts/start-satquery.sh --change-role"
 echo
 echo "  Leave this window open. Press Ctrl+C to stop everything."
+echo "  Live analyze / remote-host traffic will appear below (from backend.log)."
 echo
 
 if [[ "$SKIP_BROWSER" -eq 0 ]]; then
@@ -576,8 +569,9 @@ if [[ "$SKIP_BROWSER" -eq 0 ]]; then
   fi
 fi
 
+LOG_POS=0
 while true; do
-  sleep 2
+  sleep 1
   if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
     fail "Backend exited unexpectedly. See $LOG_DIR/backend.err.log"
     exit 1
@@ -585,5 +579,19 @@ while true; do
   if ! kill -0 "$FRONTEND_PID" 2>/dev/null; then
     fail "Frontend exited unexpectedly. See $LOG_DIR/frontend.err.log"
     exit 1
+  fi
+  if [[ -f "$LOG_DIR/backend.log" ]]; then
+    TOTAL=$(wc -l < "$LOG_DIR/backend.log" | tr -d ' ')
+    if [[ -n "$TOTAL" && "$TOTAL" -gt "$LOG_POS" ]]; then
+      sed -n "$((LOG_POS + 1)),${TOTAL}p" "$LOG_DIR/backend.log" 2>/dev/null | while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        if echo "$line" | grep -Eqi 'OUTGOING|INCOMING|Remote VLM|paired Model Host|No Model Host|No paired|analyze'; then
+          echo "  $line"
+        elif echo "$line" | grep -Eqi 'ERROR|Error|failed|WARNING'; then
+          echo "  $line"
+        fi
+      done
+      LOG_POS=$TOTAL
+    fi
   fi
 done

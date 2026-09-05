@@ -661,23 +661,12 @@ try {
     if (-not (Test-Path $uvicorn)) { throw "uvicorn.exe missing in venv - pip install may have failed" }
 
     if ($role -eq "model_host") {
-        Write-Step "6/9  Starting Model Host node API on :$NodePort"
-        $nodeLog = Join-Path $LogDir "node-host.log"
-        $nodeErr = Join-Path $LogDir "node-host.err.log"
-        $script:NodeProc = Start-Process -FilePath $uvicorn `
-            -ArgumentList @("app.node.host_app:app", "--host", "0.0.0.0", "--port", "$NodePort") `
-            -WorkingDirectory $BackendDir `
-            -WindowStyle Hidden -PassThru `
-            -RedirectStandardOutput $nodeLog -RedirectStandardError $nodeErr
+        Write-Step "6/9  Starting Model Host node API on :$NodePort (foreground — live traffic)"
+        # Run uvicorn in THIS window so pairing + query traffic is visible.
+        # (Previously logs were redirected to scripts/logs and the console looked idle.)
+        Stop-PortListeners $NodePort
+        Start-Sleep -Seconds 1
 
-        if (-not (Wait-Http "http://127.0.0.1:$NodePort/node/health" 90 "Model Host")) {
-            if (Test-Path $nodeErr) {
-                Write-Info "node-host.err.log (tail):"
-                Get-Content $nodeErr -Tail 40 | ForEach-Object { Write-Host "   $_" -ForegroundColor DarkGray }
-            }
-            throw "Model Host failed to start"
-        }
-        Write-Ok "Model Host healthy: http://127.0.0.1:$NodePort/node/health"
         Write-Banner "SatQuery Model Host is running"
         Write-Host ""
         Write-Host "  Node ID:       $script:NodeId" -ForegroundColor Green
@@ -689,20 +678,24 @@ try {
         Write-Host "  On the Controller, pair with:" -ForegroundColor Cyan
         Write-Host "    python scripts/pair_host.py <THIS_LAN_IP> $NodePort $script:PairingCode" -ForegroundColor White
         Write-Host ""
-        Write-Host "  Leave this window open. Press Ctrl+C to stop (clears role + unloads models)." -ForegroundColor Yellow
+        Write-Host "  Live pairing / query / answer logs will print below." -ForegroundColor DarkCyan
+        Write-Host "  Leave this window open. Press Ctrl+C to stop." -ForegroundColor Yellow
         Write-Host ""
 
-        while ($true) {
-            Start-Sleep -Seconds 2
-            if ($null -ne $script:NodeProc -and $script:NodeProc.HasExited) {
-                Write-Fail ("Model Host exited (code {0}). See {1}" -f $script:NodeProc.ExitCode, $nodeErr)
-                break
-            }
+        $env:PYTHONUNBUFFERED = "1"
+        Push-Location $BackendDir
+        try {
+            & $uvicorn "app.node.host_app:app" "--host" "0.0.0.0" "--port" "$NodePort" "--log-level" "info"
+        } finally {
+            Pop-Location
         }
     } else {
         Write-Step "6/9  Starting FastAPI backend on :$BackendPort"
         $backendLog = Join-Path $LogDir "backend.log"
         $backendErr = Join-Path $LogDir "backend.err.log"
+        # Truncate old logs so the live tail only shows this session
+        "" | Set-Content $backendLog -Encoding UTF8
+        "" | Set-Content $backendErr -Encoding UTF8
         $script:BackendProc = Start-Process -FilePath $uvicorn `
             -ArgumentList @("app.main:app", "--host", "0.0.0.0", "--port", "$BackendPort") `
             -WorkingDirectory $BackendDir `
@@ -794,10 +787,13 @@ try {
         }
 
         Write-Host "  Leave this window open. Press Ctrl+C to stop (clears role + unloads models)." -ForegroundColor Yellow
+        Write-Host "  Live analyze / remote-host traffic will appear below (from backend.log)." -ForegroundColor DarkCyan
         Write-Host ""
 
+        # Mirror backend log into this console so Controllers see OUTGOING/INCOMING lines
+        $logPos = 0
         while ($true) {
-            Start-Sleep -Seconds 2
+            Start-Sleep -Milliseconds 800
             if ($null -ne $script:BackendProc -and $script:BackendProc.HasExited) {
                 Write-Fail ("Backend exited (code {0}). See {1}" -f $script:BackendProc.ExitCode, $backendErr)
                 break
@@ -805,6 +801,26 @@ try {
             if ($null -ne $script:FrontendProc -and $script:FrontendProc.HasExited) {
                 Write-Fail ("Frontend exited (code {0}). See {1}" -f $script:FrontendProc.ExitCode, $frontendErr)
                 break
+            }
+            if (Test-Path $backendLog) {
+                try {
+                    $lines = Get-Content $backendLog -ErrorAction SilentlyContinue
+                    if ($null -eq $lines) { $lines = @() }
+                    if (-not ($lines -is [System.Array])) { $lines = @($lines) }
+                    if ($lines.Count -gt $logPos) {
+                        for ($i = $logPos; $i -lt $lines.Count; $i++) {
+                            $line = [string]$lines[$i]
+                            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                            # Highlight remote traffic; still show other useful lines
+                            if ($line -match "OUTGOING|INCOMING|Remote VLM|paired Model Host|No Model Host|analyze") {
+                                Write-Host "  $line" -ForegroundColor Cyan
+                            } elseif ($line -match "ERROR|Error|failed|WARNING") {
+                                Write-Host "  $line" -ForegroundColor Yellow
+                            }
+                        }
+                        $logPos = $lines.Count
+                    }
+                } catch {}
             }
         }
     }

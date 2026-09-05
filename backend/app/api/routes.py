@@ -255,7 +255,18 @@ async def _run_analysis(
     # When every step was skipped (no weights), surface a clear answer instead
     # of the integrator's "No answer generated."
     if not any(r.success for r in step_results):
-        output["answer"] = "Model not available"
+        # Prefer a concrete remote/local error over a generic placeholder
+        remote_err = next(
+            (
+                (r.output or {}).get("answer")
+                for r in reversed(step_results)
+                if isinstance(r.output, dict)
+                and r.output.get("status") == "remote_error"
+                and r.output.get("answer")
+            ),
+            None,
+        )
+        output["answer"] = remote_err or "Model not available"
         output["confidence"] = None
     integration_ms = (time.perf_counter() - integration_start) * 1000
 

@@ -55,13 +55,26 @@ class HybridPipelineExecutor:
                 "falling back to local/unavailable path"
             )
             if self.skip_local_inference:
-                return UnavailableModelExecutor().execute(
+                results = UnavailableModelExecutor().execute(
                     pipeline,
                     image_paths,
                     query,
                     request_id,
                     intent_decomposition=intent_decomposition,
                 )
+                # Make the UI answer explicit about pairing (not "weights missing")
+                for r in results:
+                    if isinstance(r.output, dict):
+                        r.output["answer"] = (
+                            "No Model Host paired. On the Controller, pair with: "
+                            "python scripts/pair_host.py <HOST_IP> <PORT> <CODE>"
+                        )
+                        r.output["status"] = "no_model_host"
+                        r.output["message"] = (
+                            "Controller has no paired Model Host in .satquery/device.json. "
+                            "Pairing is cleared every restart — re-pair after each launch."
+                        )
+                return results
             if self.registry is None:
                 raise RuntimeError("Model registry required for local inference")
             return PipelineExecutor(self.registry).execute(
@@ -92,7 +105,12 @@ class HybridPipelineExecutor:
             )
             query_for_model = (intent.get("query") if intent else None) or query
 
-            remote_task = _REMOTE_ACTIONS.get(action) if model_name == "rs_vlm" else None
+            remote_task = None
+            if model_name == "rs_vlm":
+                remote_task = _REMOTE_ACTIONS.get(action) or "vqa"
+            elif action in _REMOTE_ACTIONS:
+                remote_task = _REMOTE_ACTIONS[action]
+
             if remote_task:
                 t0 = time.perf_counter()
                 resp = try_remote_vlm(
@@ -148,9 +166,9 @@ class HybridPipelineExecutor:
                     continue
 
                 if resp is not None and resp.status == "error":
-                    # Remote attempted but failed — structured error, do not crash.
+                    err_detail = resp.error_code or resp.error or "REMOTE_INFERENCE_FAILED"
                     output = {
-                        "answer": "Model not available",
+                        "answer": f"Remote model error: {err_detail}",
                         "confidence": None,
                         "status": "remote_error",
                         "error_code": resp.error_code,
@@ -171,7 +189,7 @@ class HybridPipelineExecutor:
                             output=output,
                             time_ms=infer_ms,
                             success=False,
-                            error=resp.error_code or resp.error or "REMOTE_INFERENCE_FAILED",
+                            error=err_detail,
                             load_time_ms=0.0,
                             inference_time_ms=infer_ms,
                             model_was_cached=False,
@@ -189,6 +207,12 @@ class HybridPipelineExecutor:
                     )
                     break
 
+                # resp is None despite has_remote — log and fall through
+                logger.warning(
+                    f"[{request_id}] Step {step_num} remote path returned None "
+                    f"(model={model_name} action={action})"
+                )
+
             # No remote path for this step — local or unavailable
             if self.skip_local_inference:
                 stub = UnavailableModelExecutor().execute(
@@ -201,7 +225,9 @@ class HybridPipelineExecutor:
                 if stub:
                     stub[0].started_at_ms = started_at_ms
                     results.extend(stub)
-                    if not stub[0].success:
+                    # Specialist stubs (change_detection, etc.) must NOT abort
+                    # the pipeline before a later remote rs_vlm step can run.
+                    if not stub[0].success and model_name == "rs_vlm":
                         break
                 continue
 

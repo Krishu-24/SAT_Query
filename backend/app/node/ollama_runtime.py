@@ -3,12 +3,48 @@
 from __future__ import annotations
 
 import base64
+import io
 import time
 from typing import Any, Optional
 
 import httpx
+from PIL import Image
 
 from app.node.schemas import ImagePayload, InferenceRequest, InferenceResponse, NodeErrorCode
+
+# Ollama VLMs reject GeoTIFF / exotic formats; also choke on huge rasters.
+_MAX_EDGE_PX = 1536
+
+
+def _to_ollama_png_b64(raw_b64: str, *, filename: str = "") -> str:
+    """Decode any transfer payload → RGB PNG base64 Ollama can load."""
+    raw = raw_b64
+    if "," in raw and raw.strip().startswith("data:"):
+        raw = raw.split(",", 1)[1]
+    try:
+        data = base64.b64decode(raw, validate=False)
+    except Exception as exc:
+        raise ValueError(f"IMAGE_TRANSFER_FAILED: bad base64 ({exc})") from exc
+
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            # Multi-band / 16-bit GeoTIFF → displayable RGB
+            im = im.convert("RGB")
+            w, h = im.size
+            scale = min(1.0, _MAX_EDGE_PX / float(max(w, h, 1)))
+            if scale < 1.0:
+                im = im.resize(
+                    (max(1, int(w * scale)), max(1, int(h * scale))),
+                    Image.Resampling.LANCZOS,
+                )
+            buf = io.BytesIO()
+            im.save(buf, format="PNG", optimize=True)
+            return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception as exc:
+        raise ValueError(
+            f"IMAGE_TRANSFER_FAILED: cannot convert {filename or 'image'} "
+            f"to PNG for Ollama ({exc})"
+        ) from exc
 
 
 class OllamaNodeRuntime:
@@ -36,16 +72,7 @@ class OllamaNodeRuntime:
     def _images_b64(self, images: list[ImagePayload]) -> list[str]:
         out: list[str] = []
         for img in images:
-            raw = img.data_b64
-            # Accept raw base64 or data-URL
-            if "," in raw and raw.strip().startswith("data:"):
-                raw = raw.split(",", 1)[1]
-            # Validate decodable
-            try:
-                base64.b64decode(raw, validate=False)
-            except Exception as exc:
-                raise ValueError(f"IMAGE_TRANSFER_FAILED: {exc}") from exc
-            out.append(raw)
+            out.append(_to_ollama_png_b64(img.data_b64, filename=img.filename or ""))
         return out
 
     def infer(
