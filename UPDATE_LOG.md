@@ -2,6 +2,7 @@
 
 **Base remote:** [https://github.com/Krishu-24/SAT_Query](https://github.com/Krishu-24/SAT_Query)  
 **Base tip this work started from:** `8bf5845` — *Restructure SatQuery into a pushable app with Shiven router integration and one-click launchers*  
+**Current tip (this log):** `eb62b0d` — *Route multi-part analytical questions as a single VQA*  
 **Purpose of this file:** Describe every intentional change made on top of that base so another contributor can merge their branch against ours without guessing intent.  
 **Not a git log.** Prefer reading this + the file lists below over `git log`.
 
@@ -15,10 +16,10 @@ Specs that drove this work (do not treat as runtime code):
 
 ## How to use this when merging
 
-1. Read **Workstreams** to see what we built and what we deliberately left alone.
+1. Read **Workstreams** in order (A → B → C). C is follow-up hardening after the first multi-device ship.
 2. Compare your change list against **Hotspots** — those files are most likely to conflict.
 3. Prefer **ours** for new packages (`backend/app/node/`, hybrid executor, role scripts) unless you already reinvented the same layer.
-4. Prefer **careful merge** on shared files (`routes.py`, `validator.py`, `start-satquery.ps1` / `.sh`, `README.md`, Debug UI).
+4. Prefer **careful merge** on shared files (`routes.py`, `validator.py`, `router.py`, `start-satquery.ps1` / `.sh`, `README.md`, Debug UI).
 5. Keep **API contracts** listed under each workstream — frontend and remote nodes depend on them.
 
 ---
@@ -58,9 +59,9 @@ HTTP **422** still returns `detail.errors[]` (string list) for the existing fron
 
 ### Intentionally not changed (A)
 
-- RuleBasedRouter / Shiven planner prompts  
 - Model weights / pipelines  
-- Frontend layout for validation errors (still uses `errors[]`)
+- Frontend layout for validation errors (still uses `errors[]`)  
+- *(Router prompts/rules were left alone in A; see Workstream C for later routing fixes.)*
 
 ---
 
@@ -68,7 +69,7 @@ HTTP **422** still returns `detail.errors[]` (string list) for the existing fron
 
 ### Goal
 
-Same repo on every machine. Startup chooses a **role**. Controller talks to Model Host over LAN for VQA/captioning. Preserve existing router, frontend, validator, and Qwen pipeline shape — this is a **deployment + node communication** layer, not a rewrite.
+Same repo on every machine. Startup chooses a **role**. Controller talks to Model Host over LAN for VQA/captioning. Preserve existing frontend, validator, and Qwen pipeline shape — this is a **deployment + node communication** layer, not a rewrite.
 
 ### Roles
 
@@ -144,14 +145,87 @@ Local secrets/state (gitignored): `.satquery/device.json`
 
 ### Intentionally not changed (B)
 
-- Shiven router core / RuleBasedRouter task logic  
 - Transformers local `QwenVLMWrapper` path (still for Full System when weights exist)  
 - Synthetic map / location UX on the frontend  
 - Creating a second repo or OS-specific forks  
+- *(Initial B left Shiven/RuleBasedRouter task logic alone; Workstream C changed routing after live testing.)*
 
-### Not claimed / not fully proven
+### Not claimed at end of B
 
-- Real Mac ↔ Legion two-laptop E2E was **not** fully verified in this environment. Unit tests for pairing/inference/registry passed with mocks.
+- Real Mac ↔ Legion two-laptop E2E was **not** fully verified when B was first written. Pairing/inference/registry unit tests passed with mocks.
+
+---
+
+## Workstream C — Live fixes after multi-device + routing (append)
+
+Shipped on `main` after B, while testing Controller (Mac) ↔ Model Host (Windows). Keep this section when merging — these are behavior fixes, not optional polish.
+
+### C1 — Launcher / Python env (Windows + Mac)
+
+| Problem | Fix |
+|---------|-----|
+| Python **3.14** breaks `pydantic-core` wheels | Scripts require **3.11–3.13** (prefer 3.12); recreate bad venvs |
+| Loud pip / leftover `~*` packages on Windows | Pin direct deps in `backend/requirements-lite.txt`; quieter install |
+
+**Files:** `scripts/start-satquery.ps1`, `scripts/start-satquery.sh`, `backend/requirements-lite.txt`
+
+### C2 — Pairing looked connected but analyze said “model not loaded”
+
+| Problem | Fix |
+|---------|-----|
+| CLI pairing wrote `.satquery/device.json` while uvicorn kept an empty in-memory registry | `get_registry(reload=True)` on status, bridge, hybrid |
+| UI had no connection strip | Minimal `NodeStatus` in sidebar (connected / VLM ready) |
+
+**Files:** `backend/app/node/registry.py`, `bridge.py`, `hybrid_executor.py`, `api/node_controller.py`, `frontend/.../NodeStatus.tsx`
+
+### C3 — Model Host terminal silent; GeoTIFF queries failed
+
+| Problem | Fix |
+|---------|-----|
+| Host uvicorn ran **Hidden** → logs only in `scripts/logs/node-host*.log` | Model Host runs uvicorn **in the foreground**; Controller tails `backend.log` for OUTGOING/INCOMING |
+| Ollama rejected Sentinel-2 **GeoTIFF** (`Failed to load image`) | Host converts images → RGB **PNG** (downscale long edge) before Ollama |
+
+**Files:** `scripts/start-satquery.ps1` / `.sh`, `backend/app/node/host_routes.py`, `ollama_runtime.py`, `hybrid_executor.py`, `api/routes.py`
+
+### C4 — Router over-split a single analytical VQA
+
+Example prompt that was mis-routed to VQA + captioning + grounding/SAM:
+
+> Examine this satellite image carefully. What are the three most prominent visual features, where are they located relative to the image center, and what evidence in the image supports your identification?
+
+| Cause | Fix |
+|-------|-----|
+| Substring `"locate"` matched inside **`located`** | Whole-word / phrase keyword matching |
+| `"where are"` + split on `" and "` → grounding + second task | Compound analytical questions → **one** `rs_vlm` `answer_question` |
+| LLM planner emitted VQA+CAPTION+GROUNDING | Tighter planner prompt + adapter coalesce (drop spurious grounding/caption) |
+
+**Still correct:** `"Find the river and describe the image"` → GROUNDING + CAPTIONING.
+
+**Files:**
+
+| Action | Path |
+|--------|------|
+| **Modified** | `backend/app/agent/router.py` (`ROUTER_VERSION` → `rule_based_keyword/2`) |
+| **Modified** | `backend/app/agent/shiven_adapter.py` (plan filter / coalesce) |
+| **Modified** | `router/app/router/classifier.py` |
+| **Modified** | `router/app/planner/prompt.py`, `planner.py` |
+| **Modified** | `backend/tests/test_router.py` |
+
+### Commits in C (for orientation)
+
+| SHA | Summary |
+|-----|---------|
+| `de2b5ee` / `66ca70d` | Python pin + lite deps / Windows pip noise |
+| `ce0162d` | Stale registry + remote traffic logging |
+| `3f559e4` | Sidebar Model Host / VLM status |
+| `2c2be9b` | Foreground host console + GeoTIFF→PNG |
+| `eb62b0d` | Single-VQA routing for multi-part analytical questions |
+
+### Proven in C (manual)
+
+- Controller UI can show Model Host **connected** after pair  
+- Host receives `/node/inference`; GeoTIFF path no longer fails solely on format  
+- Analytical VQA no longer plans grounding_dino + sam for “located relative to…”
 
 ---
 
@@ -166,13 +240,14 @@ Local secrets/state (gitignored): `.satquery/device.json`
 
 ## Hotspots (merge carefully)
 
-These files were touched by **both** workstreams or are large shared surfaces:
+These files were touched across workstreams or are large shared surfaces:
 
 1. `backend/app/api/routes.py` — validator wiring **and** hybrid executor  
 2. `backend/app/agent/validator.py` — large validator rewrite  
-3. `scripts/start-satquery.ps1` / `scripts/start-satquery.sh` — large launcher rewrite  
-4. `README.md` — docs from both streams  
-5. `backend/app/output/trace.py` + `frontend/.../DebugPanel.tsx` — debug/telemetry  
+3. `backend/app/agent/router.py` + `shiven_adapter.py` + `router/app/router/classifier.py` — routing behavior (C)  
+4. `scripts/start-satquery.ps1` / `scripts/start-satquery.sh` — large launcher rewrite + foreground host  
+5. `README.md` — docs from both streams  
+6. `backend/app/output/trace.py` + `frontend/.../DebugPanel.tsx` — debug/telemetry  
 
 Safer to take **their** feature commits into a branch, then re-apply our `node/` package and hybrid executor if their branch never had multi-device.
 
@@ -185,16 +260,17 @@ Safer to take **their** feature commits into a branch, then re-apply our `node/`
 - [ ] 422 still has `detail.errors` as a string list  
 - [ ] If they also added pairing/nodes: align on one package under `backend/app/node/`  
 - [ ] If they use a different Ollama VL tag: set `hosted_models[].ollama_tag` / `DEFAULT_HOST_VLM_OLLAMA_TAG` once  
+- [ ] Analytical multi-part VQA stays **one** `rs_vlm` step (no spurious DINO/SAM)  
 - [ ] Run:  
   `cd backend && python -m pytest tests/test_validator_hard_debug.py tests/test_multidevice_nodes.py tests/test_router.py tests/test_api_analyze.py tests/test_trace_builder.py -q`  
-- [ ] Manual: Controller role + Model Host role + pair + one caption query (when two machines available)
+- [ ] Manual: Controller + Model Host + pair + GeoTIFF VQA (host terminal shows INCOMING)
 
 ---
 
 ## One-paragraph summary for chat/PR
 
-> On top of Krishu-24/SAT_Query `@8bf5845`, this tree adds (1) hard query↔input validation before routing, and (2) a role-aware multi-device layer (Controller / Model Host / Full System) with LAN pairing, base64 image transfer, Ollama-backed remote VQA via `qwen2.5vl:7b`, hybrid executor, always-reask role + clean shutdown in the one-click scripts, and minimal Debug/sidebar status — without rewriting the existing router or frontend.
+> On top of Krishu-24/SAT_Query `@8bf5845`, this tree adds (1) hard query↔input validation before routing, (2) a role-aware multi-device layer (Controller / Model Host / Full System) with LAN pairing, base64 transfer, Ollama `qwen2.5vl:7b`, hybrid executor, and always-reask role + clean shutdown, then (3) live fixes: registry reload after pair, sidebar node status, foreground Model Host logs, GeoTIFF→PNG for Ollama, and routing so multi-part analytical questions stay a single VQA instead of captioning + grounding/SAM.
 
 ---
 
-*End of update log. Append your own workstream section below if you are the other merge partner.*
+*End of update log through `eb62b0d`. Append the next workstream below if you continue this handoff.*

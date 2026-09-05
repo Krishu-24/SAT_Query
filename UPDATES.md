@@ -1,6 +1,6 @@
 # Updates
 
-For the full merge handoff (validator + multi-device), see **[UPDATE_LOG.md](./UPDATE_LOG.md)**.
+For the full merge handoff (validator + multi-device + live fixes A→B→C), see **[UPDATE_LOG.md](./UPDATE_LOG.md)** (current tip `eb62b0d`).
 
 The section below is the earlier short note for validator hardening only.
 
