@@ -243,7 +243,7 @@ def test_hybrid_executor_remote_success(tmp_path):
             models=["qwen-vl"],
             healthy=True,
         ),
-        persist=False,
+        persist=True,
     )
 
     img = tmp_path / "sat.png"

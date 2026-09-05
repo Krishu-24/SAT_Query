@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from loguru import logger
 from fastapi import APIRouter, Header, HTTPException
 
 from app.node.auth import require_bearer
@@ -134,6 +135,14 @@ def node_inference(
     _assert_host_role(cfg)
     require_bearer(authorization, cfg.auth_token)
 
+    image_names = [im.filename for im in (body.images or [])]
+    logger.info("=" * 64)
+    logger.info(f"[{body.request_id}] INCOMING ← Controller inference request")
+    logger.info(f"[{body.request_id}]   task={body.task}  model={body.model}")
+    logger.info(f"[{body.request_id}]   query={body.query!r}")
+    logger.info(f"[{body.request_id}]   images={image_names}")
+    logger.info("=" * 64)
+
     if body.task not in ("vqa", "captioning"):
         return InferenceResponse(
             request_id=body.request_id,
@@ -145,6 +154,7 @@ def node_inference(
 
     tag = _resolve_ollama_tag(cfg, body.model)
     if not tag:
+        logger.error(f"[{body.request_id}] MODEL_NOT_AVAILABLE for {body.model}")
         return InferenceResponse(
             request_id=body.request_id,
             status="error",
@@ -154,9 +164,9 @@ def node_inference(
         )
 
     runtime = OllamaNodeRuntime(cfg.ollama_url, timeout=cfg.remote_timeout_sec)
-    # Preflight Ollama
     oh = runtime.health()
     if not oh.get("ok"):
+        logger.error(f"[{body.request_id}] OLLAMA_UNAVAILABLE: {oh}")
         return InferenceResponse(
             request_id=body.request_id,
             status="error",
@@ -166,4 +176,22 @@ def node_inference(
             error=str(oh.get("error") or "Ollama unavailable"),
         )
 
-    return runtime.infer(body, node_id=cfg.node_id, ollama_tag=tag)
+    # Warn if the configured tag is not present locally
+    local_models = [str(m).lower() for m in (oh.get("models") or [])]
+    if tag.lower() not in local_models and not any(tag.lower() in m for m in local_models):
+        logger.warning(
+            f"[{body.request_id}] Ollama tag {tag!r} not in local list {oh.get('models')}; "
+            "inference may fail — run: ollama pull qwen2.5vl:7b"
+        )
+
+    logger.info(f"[{body.request_id}] Running Ollama tag={tag} ...")
+    result = runtime.infer(body, node_id=cfg.node_id, ollama_tag=tag)
+    if result.status == "success":
+        preview = (result.answer or "")[:240]
+        logger.info(f"[{body.request_id}] OUTGOING → Controller SUCCESS answer_preview={preview!r}")
+    else:
+        logger.error(
+            f"[{body.request_id}] OUTGOING → Controller FAIL "
+            f"{result.error_code}: {result.error}"
+        )
+    return result

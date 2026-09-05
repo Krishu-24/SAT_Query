@@ -218,6 +218,11 @@ async def _run_analysis(
         )
     routing_ms = (time.perf_counter() - routing_start) * 1000
 
+    logger.info(
+        f"[{request_id}] Pipeline plan: "
+        f"{[(s.get('model'), s.get('action')) for s in decision.pipeline]}"
+    )
+
     # ── 6. Execute pipeline ──
     # Hybrid executor: paired Model Hosts handle rs_vlm remotely; otherwise
     # preserve SKIP_MODEL_INFERENCE / local PipelineExecutor behavior.

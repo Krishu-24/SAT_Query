@@ -5,16 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+from loguru import logger
+
 from app.node.client import NodeClient, file_to_image_payload, make_inference_request
 from app.node.config_store import DeviceRole, load_device_config
-from app.node.registry import RegisteredNode, get_registry
+from app.node.registry import get_registry
 from app.node.schemas import InferenceResponse, NodeErrorCode
 
 
 def role_allows_controller_features() -> bool:
     cfg = load_device_config()
     if not cfg:
-        # No role file → treat as full/legacy single machine
         return True
     return cfg.role in (DeviceRole.CONTROLLER.value, DeviceRole.FULL_SYSTEM.value)
 
@@ -31,6 +32,7 @@ def try_remote_vlm(
     image_paths: list[Path],
     model: str = "qwen-vl",
     modalities: Optional[list[Optional[str]]] = None,
+    request_id: str = "demo",
 ) -> Optional[InferenceResponse]:
     """
     Attempt remote VQA/captioning via a paired Model Host.
@@ -40,10 +42,23 @@ def try_remote_vlm(
     if cfg and cfg.role == DeviceRole.MODEL_HOST.value:
         return None
 
-    registry = get_registry()
+    # Always re-read disk — CLI pairing updates device.json while uvicorn is running
+    registry = get_registry(reload=True)
     node = registry.find_for_task(task, model)
     if not node:
+        logger.warning(
+            f"[{request_id}] No paired Model Host for task={task} model={model} "
+            f"(paired_count={len(registry.list_nodes())})"
+        )
         return None
+
+    names = [Path(p).name for p in image_paths]
+    logger.info("=" * 64)
+    logger.info(f"[{request_id}] OUTGOING → Model Host {node.node_id} @ {node.base_url}")
+    logger.info(f"[{request_id}]   task={task}  model={model}")
+    logger.info(f"[{request_id}]   query={query!r}")
+    logger.info(f"[{request_id}]   images={names}")
+    logger.info("=" * 64)
 
     client = NodeClient(timeout=(cfg.remote_timeout_sec if cfg else 120.0))
     health = client.health(node)
@@ -51,8 +66,11 @@ def try_remote_vlm(
     if not health.get("ok"):
         node.last_error = health.get("error_code") or health.get("detail") or "unhealthy"
         registry.upsert(node, persist=False)
+        logger.error(
+            f"[{request_id}] Model Host unhealthy: {node.last_error} ({health})"
+        )
         return InferenceResponse(
-            request_id="local",
+            request_id=request_id,
             status="error",
             node_id=node.node_id,
             error_code=health.get("error_code") or NodeErrorCode.NODE_OFFLINE.value,
@@ -71,16 +89,30 @@ def try_remote_vlm(
         images=images,
         model=model,
         timeout=(cfg.remote_timeout_sec if cfg else 120.0),
+        metadata={"controller_request_id": request_id},
     )
+    req.request_id = request_id
+
     resp = client.infer(node, req)
     if resp.status != "success":
         node.last_error = resp.error_code or resp.error
         registry.upsert(node, persist=False)
+        logger.error(
+            f"[{request_id}] INCOMING ← REMOTE FAIL "
+            f"code={resp.error_code} error={resp.error}"
+        )
+    else:
+        preview = (resp.answer or "")[:240]
+        logger.info("=" * 64)
+        logger.info(f"[{request_id}] INCOMING ← Model Host {resp.node_id} SUCCESS")
+        logger.info(f"[{request_id}]   model={resp.model} runtime={resp.runtime}")
+        logger.info(f"[{request_id}]   answer_preview={preview!r}")
+        logger.info("=" * 64)
     return resp
 
 
 def refresh_all_node_health() -> dict[str, Any]:
-    registry = get_registry()
+    registry = get_registry(reload=True)
     client = NodeClient()
     for n in registry.list_nodes():
         h = client.health(n)

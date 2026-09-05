@@ -48,8 +48,12 @@ class HybridPipelineExecutor:
         request_id: str = "demo",
         intent_decomposition: Optional[list[dict]] = None,
     ) -> list[StepResult]:
-        has_remote = bool(get_registry().list_nodes())
+        has_remote = bool(get_registry(reload=True).list_nodes())
         if not has_remote:
+            logger.warning(
+                f"[{request_id}] No paired Model Host in registry — "
+                "falling back to local/unavailable path"
+            )
             if self.skip_local_inference:
                 return UnavailableModelExecutor().execute(
                     pipeline,
@@ -63,6 +67,11 @@ class HybridPipelineExecutor:
             return PipelineExecutor(self.registry).execute(
                 pipeline, image_paths, query, request_id
             )
+
+        logger.info(
+            f"[{request_id}] Paired hosts: "
+            f"{[n.node_id for n in get_registry().list_nodes()]}"
+        )
 
         results: list[StepResult] = []
         image_names = [Path(p).name for p in image_paths]
@@ -91,6 +100,7 @@ class HybridPipelineExecutor:
                     query=query_for_model,
                     image_paths=[Path(p) for p in image_paths],
                     model="qwen-vl",
+                    request_id=request_id,
                 )
                 infer_ms = (time.perf_counter() - t0) * 1000
 

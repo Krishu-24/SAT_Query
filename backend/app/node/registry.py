@@ -119,8 +119,10 @@ class NodeRegistry:
 _registry: Optional[NodeRegistry] = None
 
 
-def get_registry() -> NodeRegistry:
+def get_registry(*, reload: bool = False) -> NodeRegistry:
     global _registry
     if _registry is None:
         _registry = NodeRegistry()
+    elif reload:
+        _registry.reload()
     return _registry
